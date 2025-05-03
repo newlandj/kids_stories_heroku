@@ -1,0 +1,65 @@
+[tool.poetry]
+name = "kids-story-aws"
+version = "0.1.0"
+description = "AWS Lambda function for generating children's stories using LLMs"
+authors = ["Josh Newland <newlandj@gmail.com>"]
+readme = "README.md"
+packages = [{include = "storytelling"}, {include = "utils"}, {include = "tests"}] # Adjust if your structure differs
+
+[tool.poetry.dependencies]
+python = "^3.12"
+fastapi = "^0.110.0"
+uvicorn = {extras = ["standard"], version = "^0.29.0"}
+celery = "^5.3.6"
+redis = "^5.0.4"
+sqlalchemy = "^2.0.30"
+asyncpg = "^0.29.0"
+psycopg2-binary = "^2.9.9"  # PostgreSQL driver for Heroku and local testing
+openai = "^1.70.0"        # OpenAI API client
+httpx = "^0.28.1"          # HTTP client for async calls
+pillow = "^11.1.0"         # Image processing
+pydantic = "^2.11.2"        # Data validation and settings management
+python-dotenv = "^1.1.0"   # Load environment variables from .env
+
+# Add dependencies needed only for the Lambda environment (if different) under a group
+# [tool.poetry.group.lambda.dependencies]
+# ...
+
+[tool.poetry.group.dev.dependencies]
+ruff = ">=0.11.0"
+pytest = ">=8.0.0" # Added pytest for potential unit testing
+poetry-plugin-export = "^1.9.0"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+# Basic Ruff configuration
+[tool.ruff]
+line-length = 88
+select = [
+    "E",  # pycodestyle errors
+    "W",  # pycodestyle warnings
+    "F",  # pyflakes
+    "I",  # isort
+    "C",  # flake8-comprehensions
+    "B",  # flake8-bugbear
+]
+ignore = []
+
+# Target Python 3.12 for compatibility checks
+target-version = "py312"
+
+[tool.ruff.lint]
+# Add specific rules if needed
+# select = ["E", "F", "W", "I001"]
+
+[tool.ruff.format]
+# Config options for the formatter
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+
+# You might want to exclude generated files or vendored code
+# exclude = [".venv", ...]

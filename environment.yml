@@ -1,0 +1,11 @@
+name: kids-story-aws
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pip
+  - openai
+  - httpx
+  - boto3
+  - python-dotenv
+  - pillow

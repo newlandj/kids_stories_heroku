@@ -1,0 +1,18 @@
+CREATE TABLE books (
+    id SERIAL PRIMARY KEY,
+    request_id VARCHAR(36) UNIQUE NOT NULL,
+    title VARCHAR(255) NOT NULL,
+    content TEXT NOT NULL,
+    status VARCHAR(32) NOT NULL DEFAULT 'generating',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS scenes (
+    id SERIAL PRIMARY KEY,
+    book_id INTEGER REFERENCES books(id) ON DELETE CASCADE,
+    scene_number INTEGER NOT NULL,
+    image_url TEXT,
+    audio_url TEXT,
+    text TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);

@@ -1,0 +1,22 @@
+@startuml
+entity books {
+  id (PK)
+  request_id (unique)
+  title
+  content
+  status
+  created_at
+}
+
+entity scenes {
+  id (PK)
+  book_id (FK)
+  scene_number
+  image_url
+  audio_url
+  text
+  created_at
+}
+
+books ||..o{ scenes : contains
+@enduml
