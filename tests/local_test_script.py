@@ -1,79 +1,88 @@
-# tests/local_test_script.py
+"""
+Test script for FableFactory story pipeline.
+
+Modes:
+- LIVE:         All real services (default)
+- MOCK_SERVICES: Patch OpenAI, S3, etc. (MOCK_SERVICES=true)
+- HYBRID:       Only patch S3 upload (MOCK_S3=true), OpenAI is live
+
+Usage:
+  poetry run python -m tests.local_test_script           # Live
+  MOCK_SERVICES=true poetry run python -m tests.local_test_script  # Full mock
+  MOCK_S3=true poetry run python -m tests.local_test_script        # Hybrid (real OpenAI, dummy S3)
+"""
 import os
 import asyncio
 import json
-print('[DEBUG] Top of local_test_script.py loaded')
 from dotenv import load_dotenv
-from lambdas.create_book import lambda_handler as create_book_handler
-from lambdas.generate_book import lambda_handler as generate_book_handler
-from lambdas.get_book import lambda_handler as get_book_handler
+import logging
+from unittest import mock
 
 # Load environment variables from .env file
 load_dotenv()
 
-# Configure logging (can use lambda_function's setup if desired, or keep simple)
-import logging
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("local-lambda-test")
+logger = logging.getLogger("story-pipeline-test")
 
-def run_lambda_simulation():
-    # Ensure API key is set
-    if not os.environ.get("OPENAI_API_KEY"):
-        logger.error("OPENAI_API_KEY not found. Ensure it is set in your .env file.")
-        return
+# Import the story pipeline
+from storytelling.narrative_engine import FableFactory
 
-    # 1. Define the test prompt
+def mock_openai_generate_story(*args, **kwargs):
+    return "Once upon a time, there was a mock squirrel who found a mock map."
+
+def mock_identify_key_scenes(story_text):
+    return ["Mock Scene 1", "Mock Scene 2", "Mock Scene 3"]
+
+def mock_generate_single_illustration(scene, idx, art_direction):
+    return f"https://mock-s3-bucket.amazonaws.com/images/mock-illustration-{idx}.png"
+
+def mock_record_narration(scenes):
+    return [
+        {"audio_url": f"https://mock-s3-bucket.amazonaws.com/audio/mock-narration-{i}.mp3", "scene_index": i}
+        for i, _ in enumerate(scenes)
+    ]
+
+def mock_upload_file_to_s3(file_bytes, file_type, extension):
+    return f"https://mock-s3-bucket.amazonaws.com/{file_type}/mock-file.{extension}"
+
+async def run_story_pipeline_test():
     test_prompt = "A curious squirrel who discovers a hidden map"
+    mock_mode = os.environ.get("MOCK_SERVICES", "false").lower() in ("true", "1", "yes")
+    hybrid_mode = os.environ.get("MOCK_S3", "false").lower() in ("true", "1", "yes")
 
-    # 2. Simulate create_book Lambda (API Gateway event)
-    create_event = {
-        "body": json.dumps({"prompt": test_prompt, "request_id": "test-request-id"}),
-        "headers": {"Content-Type": "application/json"},
-        "httpMethod": "POST",
-        "requestContext": {"requestId": "test-request-id", "identity": {"sourceIp": "127.0.0.1"}}
-    }
-    create_context = None
-    create_response = create_book_handler(create_event, create_context)
-    print("[create_book] Response:", create_response)
-    if not (isinstance(create_response, dict) and create_response.get("statusCode", 202) in (200, 202)):
-        logger.error("create_book_handler failed.")
-        return
-    body = create_response.get("body")
-    body_json = json.loads(body) if isinstance(body, str) else body
-    book_id = body_json.get("book_id")
-    if not book_id:
-        logger.error("No book_id returned from create_book_handler.")
-        return
-    print(f"Book ID: {book_id}")
+    if mock_mode:
+        logger.info("Running in MOCK mode!")
+        with mock.patch.object(FableFactory, 'weave_narrative', side_effect=mock_openai_generate_story), \
+             mock.patch.object(FableFactory, '_identify_key_scenes', side_effect=mock_identify_key_scenes), \
+             mock.patch.object(FableFactory, '_generate_single_illustration', side_effect=mock_generate_single_illustration), \
+             mock.patch.object(FableFactory, 'record_narration', side_effect=mock_record_narration), \
+             mock.patch("services.storage.upload_file_to_s3", side_effect=mock_upload_file_to_s3):
+            factory = FableFactory()
+            result = await factory.generate_story_package(test_prompt)
+    elif hybrid_mode:
+        logger.info("Running in HYBRID mode (real OpenAI, dummy S3 upload)!")
+        with mock.patch("services.storage.upload_file_to_s3", side_effect=mock_upload_file_to_s3):
+            factory = FableFactory()
+            result = await factory.generate_story_package(test_prompt)
+    else:
+        logger.info("Running in LIVE mode!")
+        factory = FableFactory()
+        result = await factory.generate_story_package(test_prompt)
 
-    # 3. Simulate SQS trigger to generate_book Lambda
-    generate_event = {
-        "Records": [
-            {"body": json.dumps({"book_id": book_id, "prompt": test_prompt})}
-        ]
-    }
-    generate_context = None
-    print("Invoking generate_book_handler...")
-    generate_book_handler(generate_event, generate_context)
-    print("[generate_book] Invoked.")
-
-    # 4. Simulate get_book Lambda (API Gateway event)
-    get_event = {
-        "queryStringParameters": {"book_id": book_id},
-        "httpMethod": "GET"
-    }
-    get_context = None
-    get_response = get_book_handler(get_event, get_context)
-    print("[get_book] Response:", get_response)
-    # Optionally pretty-print story package
-    if get_response and isinstance(get_response, dict):
-        body = get_response.get("body")
-        if body:
-            try:
-                story_json = json.loads(body) if isinstance(body, str) else body
-                print(json.dumps(story_json, indent=2))
-            except Exception:
-                print(body)
+    print("\n===== STORY PACKAGE RESULT =====\n")
+    print(json.dumps(result, indent=2))
+    # Assertions for new structured format
+    assert "title" in result and isinstance(result["title"], str)
+    assert "characters" in result and isinstance(result["characters"], list)
+    assert "sections" in result and isinstance(result["sections"], list) and len(result["sections"]) > 0
+    assert "visual_elements" in result and isinstance(result["visual_elements"], list)
+    assert "audio_narration" in result and isinstance(result["audio_narration"], list)
+    for section in result["sections"]:
+        assert "text" in section and isinstance(section["text"], str)
+        assert "imagePrompt" in section and isinstance(section["imagePrompt"], str)
+    assert all("http" in url for url in result["visual_elements"]), "Image URLs missing or invalid"
+    assert all("audio_url" in a for a in result["audio_narration"]), "Audio URLs missing"
+    print("\nTest completed successfully!\n")
 
 if __name__ == "__main__":
-    run_lambda_simulation()
+    asyncio.run(run_story_pipeline_test())

@@ -20,6 +20,7 @@ httpx = "^0.28.1"          # HTTP client for async calls
 pillow = "^11.1.0"         # Image processing
 pydantic = "^2.11.2"        # Data validation and settings management
 python-dotenv = "^1.1.0"   # Load environment variables from .env
+boto3 = "^1.34.0"         # AWS S3 for file storage
 
 # Add dependencies needed only for the Lambda environment (if different) under a group
 # [tool.poetry.group.lambda.dependencies]
