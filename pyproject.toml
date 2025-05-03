@@ -1,10 +1,9 @@
 [tool.poetry]
-name = "kids-story-aws"
+name = "kids-story-heroku"
 version = "0.1.0"
-description = "AWS Lambda function for generating children's stories using LLMs"
+description = "Backend service to generate children's stories using LLMs"
 authors = ["Josh Newland <newlandj@gmail.com>"]
 readme = "README.md"
-packages = [{include = "storytelling"}, {include = "utils"}, {include = "tests"}] # Adjust if your structure differs
 
 [tool.poetry.dependencies]
 python = "^3.12"
