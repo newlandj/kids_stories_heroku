@@ -1,5 +1,6 @@
 import re
 import logging
+import random
 from typing import List, Dict, Any, Optional
 
 logger = logging.getLogger("kids-story-lambda")
@@ -50,9 +51,7 @@ class ContentScreener:
         """
         Suggests an alternative child-friendly topic if the original seems inappropriate.
         Used as a fallback when content moderation is triggered.
-        """
-        import random
-        
+        """        
         # Extract any positive themes from the prompt
         positive_themes = [
             word for word in prompt.lower().split() 

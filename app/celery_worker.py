@@ -2,6 +2,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import os
+import asyncio
+import gc
 from celery import Celery
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
@@ -42,7 +44,6 @@ def generate_book_task(self, book_id, prompt):
         book.status = "in_progress"
         session.commit()
         # Generate story package (using your async FableFactory)
-        import asyncio
         factory = FableFactory()
         story_package = asyncio.run(factory.generate_story_package(prompt))
         # Update book with result
@@ -50,10 +51,6 @@ def generate_book_task(self, book_id, prompt):
         # Save pages to the DB
         pages = story_package.get("pages")
         if pages:
-            # Use a new session for async DB ops
-            import asyncio
-            # Use SQLAlchemy async engine for page creation
-            # For simplicity, use a separate sync session for now
             for idx, page in enumerate(pages):
                 page_obj = Page(
                     book_id=book_id,
@@ -65,6 +62,11 @@ def generate_book_task(self, book_id, prompt):
                 )
                 session.add(page_obj)
         session.commit()
+        # Explicitly delete large objects and run garbage collection
+        del story_package
+        del pages
+        del factory
+        gc.collect()
         return {"status": "ready", "book_id": book_id}
     except Exception as e:
         session.rollback()
