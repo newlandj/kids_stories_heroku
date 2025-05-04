@@ -3,6 +3,7 @@ from celery import Celery
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from app.models import Book
+from app.crud import create_pages
 from app.db import Base, DATABASE_URL
 from storytelling.narrative_engine import FableFactory
 
@@ -43,7 +44,23 @@ def generate_book_task(self, book_id, prompt):
         story_package = asyncio.run(factory.generate_story_package(prompt))
         # Update book with result
         book.status = "ready"
-        book.result = story_package
+        # Save pages to the DB
+        pages = story_package.get("pages")
+        if pages:
+            # Use a new session for async DB ops
+            import asyncio
+            # Use SQLAlchemy async engine for page creation
+            # For simplicity, use a separate sync session for now
+            for idx, page in enumerate(pages):
+                page_obj = Page(
+                    book_id=book_id,
+                    order=idx,
+                    text=page["text"],
+                    image_prompt=page.get("imagePrompt"),
+                    audio_url=page.get("audioUrl"),
+                    image_url=page.get("imageUrl")
+                )
+                session.add(page_obj)
         session.commit()
         return {"status": "ready", "book_id": book_id}
     except Exception as e:

@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException, Depends
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.db import SessionLocal
@@ -18,10 +18,17 @@ class BookCreateRequest(BaseModel):
     prompt: str
     request_id: str
 
+class PageResponse(BaseModel):
+    order: int
+    text: str
+    image_prompt: Optional[str] = None
+    audio_url: Optional[str] = None
+    image_url: Optional[str] = None
+
 class BookResponse(BaseModel):
     book_id: str
     status: str
-    book: Optional[dict] = None
+    pages: List[PageResponse] = []
 
 # --- Redis-based status tracking ---
 BOOK_PREFIX = "book:"
@@ -32,12 +39,18 @@ async def create_book_endpoint(req: BookCreateRequest, db: AsyncSession = Depend
     # Check idempotency by request_id
     existing = await fetch_book_by_request_id(db, req.request_id)
     if existing:
-        return BookResponse(book_id=str(existing.book_id), status=existing.status, book=existing.result)
+        from app.crud import fetch_pages_by_book_id
+        pages = await fetch_pages_by_book_id(db, existing.book_id)
+        return BookResponse(
+            book_id=str(existing.book_id),
+            status=existing.status,
+            pages=[PageResponse(order=p.order, text=p.text, image_prompt=p.image_prompt, audio_url=p.audio_url, image_url=p.image_url) for p in pages]
+        )
     # Otherwise, create a new book
     book = await create_book(db, req.prompt, req.request_id)
     # Enqueue Celery task
     generate_book_task.delay(str(book.book_id), req.prompt)
-    return BookResponse(book_id=str(book.book_id), status=book.status)
+    return BookResponse(book_id=str(book.book_id), status=book.status, pages=[])
 
 @app.get("/books/{book_id}", response_model=BookResponse)
 async def get_book_endpoint(book_id: str, db: AsyncSession = Depends(get_db)):
@@ -49,7 +62,13 @@ async def get_book_endpoint(book_id: str, db: AsyncSession = Depends(get_db)):
     book = await fetch_book_by_id(db, book_uuid)
     if not book:
         raise HTTPException(status_code=404, detail="Book not found")
-    return BookResponse(book_id=book_id, status=book.status, book=book.result)
+    from app.crud import fetch_pages_by_book_id
+    pages = await fetch_pages_by_book_id(db, book.book_id)
+    return BookResponse(
+        book_id=book_id,
+        status=book.status,
+        pages=[PageResponse(order=p.order, text=p.text, image_prompt=p.image_prompt, audio_url=p.audio_url, image_url=p.image_url) for p in pages]
+    )
 
 @app.get("/")
 def read_root():

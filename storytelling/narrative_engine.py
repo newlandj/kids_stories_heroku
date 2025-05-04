@@ -40,19 +40,19 @@ class FableFactory:
         """
         import time
         start_time = time.monotonic()
-        story = await self.weave_narrative(prompt)  # story is now a dict with title, characters, sections
-        sections = story.get("sections", [])
+        story = await self.weave_narrative(prompt)  # story is now a dict with title, characters, pages
+        pages = story.get("pages", [])
         visual_elements = []
         audio_narration = []
 
-        # Parallelize illustration and narration generation for all sections
+        # Parallelize illustration and narration generation for all pages
         image_tasks = [
-            self._generate_single_illustration(section["imagePrompt"], idx, art_direction=None)
-            for idx, section in enumerate(sections)
+            self._generate_single_illustration(page["imagePrompt"], idx, art_direction=None)
+            for idx, page in enumerate(pages)
         ]
         audio_tasks = [
-            self._generate_single_narration(section["text"], idx, self._select_voice_for_story(section["text"]))
-            for idx, section in enumerate(sections)
+            self._generate_single_narration(page["text"], idx, self._select_voice_for_story(page["text"]))
+            for idx, page in enumerate(pages)
         ]
         # Run all tasks in parallel
         visual_elements, audio_narration = await asyncio.gather(
@@ -60,20 +60,29 @@ class FableFactory:
             asyncio.gather(*audio_tasks)
         )
 
-        word_count = sum(len(section["text"].split()) for section in sections)
+        # Wire imageUrl and audioUrl into each page
+        for idx, page in enumerate(pages):
+            if idx < len(visual_elements):
+                page["imageUrl"] = visual_elements[idx]
+            # Find matching audio narration by index
+            audio = next((a for a in audio_narration if a.get("page_index") == idx), None)
+            if audio:
+                page["audioUrl"] = audio["audio_url"]
+
+        word_count = sum(len(page["text"].split()) for page in pages)
         illustration_count = len(visual_elements)
-        scene_count = len(sections)
+        page_count = len(pages)
         elapsed = time.monotonic() - start_time
-        logger.info(f"Story generation complete in {elapsed:.2f} seconds. Title: {story.get('title')}, {scene_count} scenes, {illustration_count} images, {word_count} words.")
+        logger.info(f"Story generation complete in {elapsed:.2f} seconds. Title: {story.get('title')}, {page_count} pages, {illustration_count} images, {word_count} words.")
         return {
             "title": story.get("title"),
             "characters": story.get("characters"),
-            "sections": sections,
+            "pages": pages,
             "visual_elements": visual_elements,
             "audio_narration": audio_narration,
             "word_count": word_count,
             "illustration_count": illustration_count,
-            "scene_count": scene_count
+            "page_count": page_count
         }
     """Orchestrates the generation of children's story elements using AI"""
     
@@ -97,19 +106,6 @@ class FableFactory:
         # Removed story_structure_template loading to avoid missing method errors
         
     def _get_openai_api_key(self) -> Optional[str]:
-        # Fetch API key: SSM in AWS or env var locally
-        if os.environ.get("AWS_LAMBDA_FUNCTION_NAME"):
-            param = AppConfig.get_value("openai_ssm_param_name")
-            if not param:
-                logger.error("SSM parameter name not configured.")
-                return None
-            ssm = boto3.client('ssm')
-            try:
-                resp = ssm.get_parameter(Name=param, WithDecryption=True)
-                return resp['Parameter']['Value']
-            except Exception as e:
-                logger.error(f"Failed to fetch OpenAI key: {e}")
-                return None
         return os.environ.get("OPENAI_API_KEY")
 
     async def weave_narrative(self, prompt: str) -> dict:
@@ -121,7 +117,7 @@ class FableFactory:
                 "characters": [
                     {"name": "Jamie", "description": "a brave 8-year-old with curly brown hair and a blue backpack"}
                 ],
-                "sections": [
+                "pages": [
                     {"text": "Jamie found a mysterious map in the attic.", "imagePrompt": "A child holding a map in a dusty attic, sunlight streaming in."},
                     {"text": "Jamie followed the map into the woods, meeting a talking squirrel.", "imagePrompt": "A child and a talking squirrel in a magical forest."},
                     {"text": "Together, they discovered a hidden treasure.", "imagePrompt": "A child and squirrel celebrating next to a treasure chest in the woods."}
@@ -130,14 +126,14 @@ class FableFactory:
         self.content_screener.validate_prompt(prompt)
         system_prompt = (
             "You are a children's story writer creating engaging, age-appropriate stories for children in grades 1-3 (ages 6-9). "
-            "Create stories with 3-4 sections, each with a vivid scene that can be illustrated.\n\n"
+            "Create stories with 3-4 pages, each with a vivid scene that can be illustrated.\n\n"
             "For each story:\n"
             "1. Create detailed character descriptions that should remain consistent throughout the story\n"
-            "2. For each section, provide a detailed image description that maintains character consistency\n"
+            "2. For each page, provide a detailed image description that maintains character consistency\n"
             "3. Format the response as JSON with:\n"
             "   - title: string\n"
             "   - characters: array of {name: string, description: string}\n"
-            "   - sections: array of {text: string, imagePrompt: string}\n"
+            "   - pages: array of {text: string, imagePrompt: string}\n"
             "Make character descriptions specific (e.g., 'a 7-year-old girl with curly red hair and green eyes, wearing a yellow polka dot dress')\n"
             "\nIMPORTANT: Respond ONLY with a valid JSON object. Do not include any commentary, explanation, or code fences."
         )
@@ -176,29 +172,29 @@ class FableFactory:
         # Fallback
         return self._generate_fallback_story(prompt)
 
-    def _identify_key_scenes(self, story_text: str) -> List[str]:
-        # Only use dummy scene titles if USE_DUMMY_AI=true
+    def _identify_key_pages(self, story_text: str) -> List[str]:
+        # Only use dummy page titles if USE_DUMMY_AI=true
         if os.environ.get("USE_DUMMY_AI", "false").lower() in ("true", "1", "yes"):
-            return ["Scene 1: The adventure begins.", "Scene 2: The challenge.", "Scene 3: The resolution."]
+            return ["Page 1: The adventure begins.", "Page 2: The challenge.", "Page 3: The resolution."]
         paras = [p.strip() for p in story_text.replace("\r","\n").split("\n\n") if p.strip()]
         if len(paras) <=4: return paras
         markers=[]
         for idx,p in enumerate(paras):
             if p.startswith('"') or any(w in p.lower() for w in ["suddenly","later","meanwhile"]): markers.append(idx)
         if 2<=len(markers)<=5:
-            scenes=[]; prev=0
+            pages=[]; prev=0
             for m in markers:
-                if m>prev: scenes.append(" ".join(paras[prev:m])); prev=m
-            if prev<len(paras): scenes.append(" ".join(paras[prev:]))
-            if 2<=len(scenes)<=5: return scenes
+                if m>prev: pages.append(" ".join(paras[prev:m])); prev=m
+            if prev<len(paras): pages.append(" ".join(paras[prev:]))
+            if 2<=len(pages)<=5: return pages
         # fallback equal segments
-        n=4; size=max(1,len(paras)//n); scenes=[" ".join(paras[i:i+size]) for i in range(0,len(paras),size)][:n]
-        return scenes
+        n=4; size=max(1,len(paras)//n); pages=[" ".join(paras[i:i+size]) for i in range(0,len(paras),size)][:n]
+        return pages
 
-    async def _generate_single_illustration(self, scene, idx, art_direction):
+    async def _generate_single_illustration(self, page_prompt, idx, art_direction):
         if os.environ.get("USE_DUMMY_AI", "false").lower() in ("true", "1", "yes"):
             return f"dummy-illustration-{idx}.png"
-        prompt = f"Colorful children's book illustration, {art_direction}: {scene}"
+        prompt = f"Colorful children's book illustration, {art_direction}: {page_prompt}"
         resp = await asyncio.to_thread(self.client.images.generate, model="dall-e-3", prompt=prompt, size="1024x1024", n=1)
         url = resp.data[0].url
         # Download image bytes
@@ -231,9 +227,9 @@ class FableFactory:
             return "echo"
         return "onyx"
 
-    async def _generate_single_narration(self, scene, idx, voice):
+    async def _generate_single_narration(self, page_text, idx, voice):
         """
-        Generate TTS audio for a scene using OpenAI TTS and return S3 audio URL and scene index (no bytes in result).
+        Generate TTS audio for a page using OpenAI TTS and return S3 audio URL and page index (no bytes in result).
         """
         import openai
         client = getattr(self, "client", openai)
@@ -241,19 +237,19 @@ class FableFactory:
             client.audio.speech.create,
             model="tts-1",
             voice=voice,
-            input=scene
+            input=page_text
         )
         audio_bytes = resp.content if hasattr(resp, "content") else resp
         audio_url = upload_file_to_s3(audio_bytes, file_type="audio", extension="mp3")
-        return {"audio_url": audio_url, "scene_index": idx}
+        return {"audio_url": audio_url, "page_index": idx}
 
-    async def record_narration(self, scenes):
+    async def record_narration(self, pages):
         if os.environ.get("USE_DUMMY_AI", "false").lower() in ("true", "1", "yes"):
-            return [ {"audio_url":"dummy-narration.mp3","scene_index":i} for i,_ in enumerate(scenes) ]
-        voice = self._select_voice_for_story(scenes[0] if scenes else "")
-        tasks=[asyncio.create_task(self._generate_single_narration(scene,i,voice)) for i,scene in enumerate(scenes) if scene]
+            return [ {"audio_url":"dummy-narration.mp3","page_index":i} for i,_ in enumerate(pages) ]
+        voice = self._select_voice_for_story(pages[0] if pages else "")
+        tasks=[asyncio.create_task(self._generate_single_narration(page_text,i,voice)) for i,page_text in enumerate(pages) if page_text]
         narrations = await asyncio.gather(*tasks)
-        # narrations now only contain serializable fields (audio_url, scene_index)
+        # narrations now only contain serializable fields (audio_url, page_index)
         return narrations
 
 def generate_story_package(prompt: str) -> dict:

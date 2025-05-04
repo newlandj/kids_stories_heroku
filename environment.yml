@@ -9,3 +9,14 @@ dependencies:
   - boto3
   - python-dotenv
   - pillow
+  - alembic
+  - fastapi
+  - uvicorn
+  - celery
+  - redis
+  - sqlalchemy
+  - asyncpg
+  - psycopg2-binary
+  - pydantic
+  - ruff
+  - pytest
