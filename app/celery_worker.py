@@ -1,11 +1,14 @@
+from dotenv import load_dotenv
+load_dotenv()
+
 import os
 from celery import Celery
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
-from app.models import Book
+from app.models import Book, Page
 from app.crud import create_pages
 from app.db import Base, DATABASE_URL
-from storytelling.narrative_engine import FableFactory
+from app.narrative_engine import FableFactory
 
 redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
 

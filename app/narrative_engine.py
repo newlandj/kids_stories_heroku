@@ -1,7 +1,6 @@
 """
 AI pipeline logic:
 - USE_DUMMY_AI=true: Use dummy images/audio (for fast local/dev testing, no API calls)
-- SKIP_DB=true: Skip DB, but still call real AI models unless USE_DUMMY_AI is set
 """
 import os
 import logging
@@ -21,11 +20,11 @@ import boto3
 from urllib.parse import urlparse
 from PIL import Image
 import requests
-from services.storage import upload_file_to_s3
+from app.storage import upload_file_to_s3
 
 # Local imports
-from utils.content_safety import ContentScreener
-from settings import AppConfig
+from app.content_safety import ContentScreener
+from app.settings import AppConfig
 
 # Configure logging
 logger = logging.getLogger("kids-story-lambda")
@@ -193,7 +192,7 @@ class FableFactory:
 
     async def _generate_single_illustration(self, page_prompt, idx, art_direction):
         if os.environ.get("USE_DUMMY_AI", "false").lower() in ("true", "1", "yes"):
-            return f"dummy-illustration-{idx}.png"
+            return f"https://dummy-illustration-{idx}.png"
         prompt = f"Colorful children's book illustration, {art_direction}: {page_prompt}"
         resp = await asyncio.to_thread(self.client.images.generate, model="dall-e-3", prompt=prompt, size="1024x1024", n=1)
         url = resp.data[0].url

@@ -41,7 +41,27 @@ clean:
 	find . -type d -name '__pycache__' -exec rm -rf {} +
 	rm -rf .pytest_cache .ruff_cache build dist *.egg-info
 
+# ============================================================================== 
+# Dev Environment (App + Redis + Celery)
 # ==============================================================================
+
+dev:
+	@echo "Starting Redis, FastAPI app, and Celery worker in separate terminals..."
+	@echo "If you have tmux, use: make dev-tmux"
+	@echo "Otherwise, open three terminals and run:"
+	@echo "  1. redis-server"
+	@echo "  2. poetry run uvicorn app.main:app --reload"
+	@echo "  3. poetry run celery -A app.celery_worker.celery_app worker --loglevel=info"
+
+# Run all dev services in tmux panes (if tmux is installed)
+dev-tmux:
+	tmux new-session -d -s kidsstory 'redis-server'
+	tmux split-window -h -t kidsstory 'poetry run uvicorn app.main:app --reload'
+	tmux split-window -v -t kidsstory:0.1 'poetry run celery -A app.celery_worker.celery_app worker --loglevel=info'
+	tmux select-layout -t kidsstory tiled
+	tmux attach -t kidsstory
+
+# ============================================================================== 
 # Help Target
 # ==============================================================================
 
@@ -52,6 +72,8 @@ help:
 	@echo "  make check       - Check code style using Ruff (read-only)."
 	@echo "  make test_local  - Run the local test script (tests/local_test_script.py)."
 	@echo "  make clean       - Remove temporary Python files and build artifacts."
+	@echo "  make dev         - Print instructions to start Redis, FastAPI, and Celery."
+	@echo "  make dev-tmux    - Start all dev services in a tmux session (if installed)."
 
 # Default target (runs when typing just 'make')
 default: help

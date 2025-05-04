@@ -3,9 +3,10 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import Book, Page
-from utils.content_safety import ContentScreener
+from app.content_safety import ContentScreener
 
 async def create_book(session: AsyncSession, prompt: str, request_id: str):
+    print("Creating book...")
     screener = ContentScreener()
     screener.validate_prompt(prompt)
     book = Book(
@@ -17,7 +18,9 @@ async def create_book(session: AsyncSession, prompt: str, request_id: str):
     session.add(book)
     try:
         await session.commit()
-    except IntegrityError:
+        print("Book created successfully")
+    except IntegrityError as e:
+        print("IntegrityError:", e)
         await session.rollback()
         # Duplicate request_id: fetch and return existing
         q = await session.execute(select(Book).where(Book.request_id == request_id))

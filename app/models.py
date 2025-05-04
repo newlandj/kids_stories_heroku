@@ -15,7 +15,12 @@ class Book(Base):
     prompt: Mapped[str] = mapped_column(sa.Text, nullable=False)
     status: Mapped[str] = mapped_column(sa.String(32), nullable=False, default="pending")
     created_at: Mapped[sa.DateTime] = mapped_column(sa.DateTime(timezone=True), server_default=func.now())
-    updated_at: Mapped[sa.DateTime] = mapped_column(sa.DateTime(timezone=True), onupdate=func.now())
+    updated_at: Mapped[sa.DateTime] = mapped_column(
+        sa.DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False
+    )
 
     pages = relationship("Page", back_populates="book", cascade="all, delete-orphan", order_by="Page.order")
 
