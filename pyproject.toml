@@ -9,19 +9,20 @@ package-mode = false
 [tool.poetry.dependencies]
 python = "^3.12"
 alembic = "^1.15.2"
-fastapi = "^0.110.0"
-uvicorn = {extras = ["standard"], version = "^0.29.0"}
-celery = "^5.3.6"
-redis = "^5.0.4"
-sqlalchemy = "^2.0.30"
-asyncpg = "^0.29.0"
-psycopg2-binary = "^2.9.9"  # PostgreSQL driver for Heroku and local testing
-openai = "^1.70.0"        # OpenAI API client
+asyncpg = "^0.30.0"
+boto3 = "^1.38.0"         # AWS S3 for file storage
+celery = "^5.4"
 httpx = "^0.28.1"          # HTTP client for async calls
+fastapi = "^0.115.0"
+openai = "^1.77.0"        # OpenAI API client
 pillow = "^11.1.0"         # Image processing
+psycopg2-binary = "^2.9.9"  # PostgreSQL driver for Heroku and local testing
 pydantic = "^2.11.2"        # Data validation and settings management
 python-dotenv = "^1.1.0"   # Load environment variables from .env
-boto3 = "^1.34.0"         # AWS S3 for file storage
+redis = "^6.0"
+requests = "^2.32.3"
+sqlalchemy = "^2.0.40"
+uvicorn = {extras = ["standard"], version = "^0.34.0"}
 
 [tool.poetry.group.dev.dependencies]
 ruff = ">=0.11.0"
