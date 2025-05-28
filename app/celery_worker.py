@@ -19,7 +19,12 @@ import ssl
 redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
 redis_use_ssl = redis_url.startswith('rediss://')
 
-ssl_options = {'ssl_cert_reqs': ssl.CERT_NONE} if redis_use_ssl else None
+ssl_options = None
+if redis_use_ssl:
+    ssl_options = {
+        'ssl_cert_reqs': ssl.CERT_NONE,
+        'ssl_check_hostname': False,
+    }
 
 celery_app = Celery(
     "kids_story_tasks",
