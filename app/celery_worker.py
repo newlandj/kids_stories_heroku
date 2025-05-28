@@ -14,18 +14,35 @@ from app.narrative_engine import FableFactory
 
 redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
 
+# Parse the Redis URL to extract components
+from urllib.parse import urlparse, urlunparse, parse_qs, urlencode
+parsed = urlparse(redis_url)
+
 # Configure Redis SSL settings if using rediss://
-redis_use_ssl = redis_url.startswith('rediss://')
-broker_use_ssl = {
-    'ssl_cert_reqs': 'CERT_NONE'  # Using CERT_NONE for Heroku Redis, adjust if needed
-} if redis_use_ssl else None
+redis_use_ssl = parsed.scheme == 'rediss'
+
+# For Heroku Redis, we need to use SSL with specific parameters
+if redis_use_ssl:
+    # Parse query parameters
+    query_params = parse_qs(parsed.query)
+    # Add SSL parameters
+    query_params['ssl_cert_reqs'] = 'none'  # This is the correct format for redis-py
+    query_params['ssl'] = 'true'
+    # Rebuild the URL with updated query parameters
+    netloc = parsed.netloc.split('@')[-1]  # Remove auth if present
+    if parsed.password:
+        netloc = f":{parsed.password}@{netloc}"
+    if parsed.username:
+        netloc = f"{parsed.username}:{netloc}"
+    
+    redis_url = urlunparse(('rediss', netloc, parsed.path, '', urlencode(query_params, doseq=True), ''))
 
 celery_app = Celery(
     "kids_story_tasks",
     broker=redis_url,
     backend=redis_url,
-    broker_use_ssl=broker_use_ssl,
-    redis_backend_use_ssl=broker_use_ssl
+    broker_use_ssl={'ssl_cert_reqs': None},  # Disable cert verification for Heroku Redis
+    redis_backend_use_ssl={'ssl_cert_reqs': None}  # Disable cert verification for Heroku Redis
 )
 
 celery_app.conf.update(
