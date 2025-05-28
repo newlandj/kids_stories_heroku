@@ -14,10 +14,18 @@ from app.narrative_engine import FableFactory
 
 redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
 
+# Configure Redis SSL settings if using rediss://
+redis_use_ssl = redis_url.startswith('rediss://')
+broker_use_ssl = {
+    'ssl_cert_reqs': 'CERT_NONE'  # Using CERT_NONE for Heroku Redis, adjust if needed
+} if redis_use_ssl else None
+
 celery_app = Celery(
     "kids_story_tasks",
     broker=redis_url,
     backend=redis_url,
+    broker_use_ssl=broker_use_ssl,
+    redis_backend_use_ssl=broker_use_ssl
 )
 
 celery_app.conf.update(
@@ -26,6 +34,9 @@ celery_app.conf.update(
     result_serializer="json",
     timezone="UTC",
     enable_utc=True,
+    broker_connection_retry_on_startup=True,
+    broker_connection_retry=True,
+    broker_connection_max_retries=3
 )
 
 # Set up sync SQLAlchemy for Celery
