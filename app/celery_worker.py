@@ -65,6 +65,7 @@ def generate_book_task(self, book_id, prompt):
         story_package = asyncio.run(factory.generate_story_package(prompt))
         # Update book with result
         book.status = "ready"
+        book.title = story_package.get("title")  # Save generated title
         # Save pages to the DB
         pages = story_package.get("pages")
         if pages:

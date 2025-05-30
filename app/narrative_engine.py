@@ -190,9 +190,11 @@ class FableFactory:
 
         system_prompt = (
             "You are a children's story writer creating engaging, age-appropriate stories for children in grades 1-3 (ages 6-9). "
-            "Create stories with 3-4 pages, each with a vivid scene that can be illustrated. For each story, create detailed character descriptions that should remain consistent throughout the story. For each page, provide a detailed image description that maintains character consistency."
+            "Create stories with 3-4 pages, each with a vivid scene that can be illustrated. For each story, create detailed character descriptions that should remain consistent throughout the story. For each page, provide a detailed image description that maintains character consistency. "
+            "IMPORTANT: Each story MUST include a creative, appropriate book title, and the title MUST be returned as the 'title' field in the structured JSON output."
         )
-        user_message = f"Create a children's story about: {prompt}"
+        user_message = f"Create a children's story about: {prompt}. Please ensure your response includes a creative, appropriate title for the book, returned as the 'title' field in the structured JSON output."
+
         attempts, backoff = 3, 1
         for i in range(attempts):
             try:

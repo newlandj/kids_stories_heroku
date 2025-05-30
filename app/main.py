@@ -31,6 +31,7 @@ class PageResponse(BaseModel):
 class BookResponse(BaseModel):
     book_id: str
     status: str
+    title: Optional[str] = None
     pages: List[PageResponse] = []
 
 # --- Redis-based status tracking ---
@@ -47,13 +48,14 @@ async def create_book_endpoint(req: BookCreateRequest, db: AsyncSession = Depend
         return BookResponse(
             book_id=str(existing.book_id),
             status=existing.status,
+            title=existing.title,
             pages=[PageResponse(order=p.order, text=p.text, image_prompt=p.image_prompt, audio_url=p.audio_url, image_url=p.image_url) for p in pages]
         )
     # Otherwise, create a new book
     book = await create_book(db, req.prompt, req.request_id)
     # Enqueue Celery task
     generate_book_task.delay(str(book.book_id), req.prompt)
-    return BookResponse(book_id=str(book.book_id), status=book.status, pages=[])
+    return BookResponse(book_id=str(book.book_id), status=book.status, title=book.title, pages=[])
 
 @app.get("/books/{book_id}", response_model=BookResponse)
 async def get_book_endpoint(book_id: str, db: AsyncSession = Depends(get_db)):
@@ -70,6 +72,7 @@ async def get_book_endpoint(book_id: str, db: AsyncSession = Depends(get_db)):
     return BookResponse(
         book_id=book_id,
         status=book.status,
+        title=book.title,
         pages=[PageResponse(order=p.order, text=p.text, image_prompt=p.image_prompt, audio_url=p.audio_url, image_url=p.image_url) for p in pages]
     )
 
