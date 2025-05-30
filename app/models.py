@@ -14,6 +14,7 @@ class Book(Base):
     request_id: Mapped[str] = mapped_column(sa.String, unique=True, nullable=False)
     prompt: Mapped[str] = mapped_column(sa.Text, nullable=False)
     status: Mapped[str] = mapped_column(sa.String(32), nullable=False, default="pending")
+    title: Mapped[str] = mapped_column(sa.String, nullable=True)
     created_at: Mapped[sa.DateTime] = mapped_column(sa.DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[sa.DateTime] = mapped_column(
         sa.DateTime(timezone=True),

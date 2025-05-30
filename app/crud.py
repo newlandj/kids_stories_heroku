@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import Book, Page
 from app.content_safety import ContentScreener
 
-async def create_book(session: AsyncSession, prompt: str, request_id: str):
+async def create_book(session: AsyncSession, prompt: str, request_id: str, title: str = None):
     print("Creating book...")
     screener = ContentScreener()
     screener.validate_prompt(prompt)
@@ -13,7 +13,8 @@ async def create_book(session: AsyncSession, prompt: str, request_id: str):
         book_id=uuid.uuid4(),
         request_id=request_id,
         prompt=prompt,
-        status="pending"
+        status="pending",
+        title=title
     )
     session.add(book)
     try:
@@ -65,3 +66,12 @@ async def create_pages(session: AsyncSession, book_id: uuid.UUID, pages: list[di
 async def fetch_pages_by_book_id(session: AsyncSession, book_id: uuid.UUID):
     q = await session.execute(select(Page).where(Page.book_id == book_id).order_by(Page.order))
     return q.scalars().all()
+
+async def update_book_title(session: AsyncSession, book_id: uuid.UUID, title: str):
+    q = await session.execute(select(Book).where(Book.book_id == book_id))
+    book = q.scalar_one_or_none()
+    if not book:
+        return None
+    book.title = title
+    await session.commit()
+    return book
