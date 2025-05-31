@@ -17,6 +17,7 @@ fastapi = "^0.115.0"
 openai = "^1.77.0"        # OpenAI API client
 pillow = "^11.1.0"         # Image processing
 psycopg2-binary = "^2.9.9"  # PostgreSQL driver for Heroku and local testing
+psutil = "^7.0.0"
 pydantic = "^2.11.2"        # Data validation and settings management
 python-dotenv = "^1.1.0"   # Load environment variables from .env
 redis = "^6.0"

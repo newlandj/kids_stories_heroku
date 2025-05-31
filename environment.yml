@@ -16,6 +16,7 @@ dependencies:
   - sqlalchemy
   - asyncpg
   - psycopg2-binary
+  - psutil
   - pydantic
   - ruff
   - pytest

@@ -1,3 +1,12 @@
+import logging
+import sys
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)],
+)
+
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -9,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db import SessionLocal
 from app.crud import create_book, fetch_book_by_id, fetch_book_by_request_id
 from app.celery_worker import generate_book_task
+from app.utils import log_memory_usage
 
 app = FastAPI()
 
@@ -40,11 +50,13 @@ BOOK_PREFIX = "book:"
 # --- FastAPI endpoints ---
 @app.post("/books/", response_model=BookResponse, status_code=202)
 async def create_book_endpoint(req: BookCreateRequest, db: AsyncSession = Depends(get_db)):
+    log_memory_usage("main.create_book_endpoint: start")
     # Check idempotency by request_id
     existing = await fetch_book_by_request_id(db, req.request_id)
     if existing:
         from app.crud import fetch_pages_by_book_id
         pages = await fetch_pages_by_book_id(db, existing.book_id)
+        log_memory_usage("main.create_book_endpoint: returning existing")
         return BookResponse(
             book_id=str(existing.book_id),
             status=existing.status,
@@ -55,10 +67,12 @@ async def create_book_endpoint(req: BookCreateRequest, db: AsyncSession = Depend
     book = await create_book(db, req.prompt, req.request_id)
     # Enqueue Celery task
     generate_book_task.delay(str(book.book_id), req.prompt)
+    log_memory_usage("main.create_book_endpoint: after enqueue")
     return BookResponse(book_id=str(book.book_id), status=book.status, title=book.title, pages=[])
 
 @app.get("/books/{book_id}", response_model=BookResponse)
 async def get_book_endpoint(book_id: str, db: AsyncSession = Depends(get_db)):
+    log_memory_usage("main.get_book_endpoint: start")
     import uuid as uuid_mod
     try:
         book_uuid = uuid_mod.UUID(book_id)
@@ -69,6 +83,7 @@ async def get_book_endpoint(book_id: str, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Book not found")
     from app.crud import fetch_pages_by_book_id
     pages = await fetch_pages_by_book_id(db, book.book_id)
+    log_memory_usage("main.get_book_endpoint: after fetch")
     return BookResponse(
         book_id=book_id,
         status=book.status,
