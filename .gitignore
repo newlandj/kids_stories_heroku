@@ -52,6 +52,7 @@ Icon
 # Logs and databases
 *.log
 *.sqlite3
+*.rdb
 
 # Sensitive Information
 *.pem
@@ -70,3 +71,4 @@ coverage.xml
 *.cover
 .hypothesis/
 .pytest_cache/
+dump.rdb
