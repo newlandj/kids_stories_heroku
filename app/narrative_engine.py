@@ -30,6 +30,7 @@ from app.settings import AppConfig
 
 # Configure logging
 logger = logging.getLogger("kids-story-lambda")
+from app.utils import log_memory_usage
 
 import asyncio
 
@@ -54,11 +55,13 @@ class FableFactory:
         }
 
     async def generate_story_package(self, prompt: str) -> dict:
+        log_memory_usage("narrative_engine.FableFactory.generate_story_package: start")
         """
         Orchestrates the generation of children's story elements using AI (structured JSON pipeline)
         """
         start_time = time.monotonic()
         story = await self.weave_narrative(prompt)  # story is now a dict with title, characters, pages
+        log_memory_usage("narrative_engine.FableFactory.generate_story_package: after weave_narrative")
         pages = story.get("pages", [])
         visual_elements = []
         audio_narration = []
@@ -88,7 +91,7 @@ class FableFactory:
             asyncio.gather(*image_tasks),
             asyncio.gather(*audio_tasks)
         )
-
+        log_memory_usage("narrative_engine.FableFactory.generate_story_package: after images/audio")
         # Wire imageUrl and audioUrl into each page
         for idx, page in enumerate(pages):
             if idx < len(visual_elements):
@@ -97,12 +100,13 @@ class FableFactory:
             audio = next((a for a in audio_narration if a.get("page_index") == idx), None)
             if audio:
                 page["audioUrl"] = audio["audio_url"]
-
+        log_memory_usage("narrative_engine.FableFactory.generate_story_package: after wiring URLs")
         word_count = sum(len(page["text"].split()) for page in pages)
         illustration_count = len(visual_elements)
         page_count = len(pages)
         elapsed = time.monotonic() - start_time
         logger.info(f"Story generation complete in {elapsed:.2f} seconds. Title: {story.get('title')}, {page_count} pages, {illustration_count} images, {word_count} words.")
+        log_memory_usage("narrative_engine.FableFactory.generate_story_package: end")
         return {
             "title": story.get("title"),
             "characters": story.get("characters"),
@@ -119,6 +123,7 @@ class FableFactory:
         return os.environ.get("OPENAI_API_KEY")
 
     async def weave_narrative(self, prompt: str) -> dict:
+        log_memory_usage("narrative_engine.FableFactory.weave_narrative: start")
         if os.environ.get("USE_DUMMY_AI", "false").lower() in ("true", "1", "yes"):
             # Minimal dummy response in new structure
             return {
@@ -226,6 +231,7 @@ class FableFactory:
         return self._generate_fallback_story(prompt)
 
     async def _generate_single_illustration(self, page_prompt, idx, art_direction):
+        log_memory_usage(f"narrative_engine.FableFactory._generate_single_illustration: start idx={idx}")
         if os.environ.get("USE_DUMMY_AI", "false").lower() in ("true", "1", "yes") or \
            os.environ.get("MOCK_IMAGES", "false").lower() in ("true", "1", "yes"):
             return f"https://kids-story-assets-dev.s3.us-west-1.amazonaws.com/images/dummy-illustration-{idx}.webp"
@@ -263,6 +269,7 @@ class FableFactory:
         return "onyx"
 
     async def _generate_single_narration(self, page_text, idx, voice):
+        log_memory_usage(f"narrative_engine.FableFactory._generate_single_narration: start idx={idx}")
         """
         Generate TTS audio for a page using OpenAI TTS and return S3 audio URL and page index (no bytes in result).
         """

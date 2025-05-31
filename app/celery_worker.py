@@ -11,6 +11,7 @@ from app.models import Book, Page
 from app.crud import create_pages
 from app.db import Base, DATABASE_URL
 from app.narrative_engine import FableFactory
+from app.utils import log_memory_usage
 
 redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
 
@@ -52,6 +53,7 @@ Session = sessionmaker(bind=engine)
 
 @celery_app.task(bind=True)
 def generate_book_task(self, book_id, prompt):
+    log_memory_usage("celery_worker.generate_book_task: start")
     session = Session()
     try:
         # Mark as in_progress
@@ -60,9 +62,11 @@ def generate_book_task(self, book_id, prompt):
             return {"status": "not_found", "book_id": book_id}
         book.status = "in_progress"
         session.commit()
+        log_memory_usage("celery_worker.generate_book_task: after mark in_progress")
         # Generate story package (using your async FableFactory)
         factory = FableFactory()
         story_package = asyncio.run(factory.generate_story_package(prompt))
+        log_memory_usage("celery_worker.generate_book_task: after story generation")
         # Update book with result
         book.status = "ready"
         book.title = story_package.get("title")  # Save generated title
@@ -80,11 +84,13 @@ def generate_book_task(self, book_id, prompt):
                 )
                 session.add(page_obj)
         session.commit()
+        log_memory_usage("celery_worker.generate_book_task: after DB commit")
         # Explicitly delete large objects and run garbage collection
         del story_package
         del pages
         del factory
         gc.collect()
+        log_memory_usage("celery_worker.generate_book_task: after gc.collect()")
         return {"status": "ready", "book_id": book_id}
     except Exception as e:
         session.rollback()
