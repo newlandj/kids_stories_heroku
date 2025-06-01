@@ -35,8 +35,9 @@ app url: https://kids-story-creator-5741befe1fe7.herokuapp.com/
 - **Startup FastAPI server**
     - In the project root:
       ```bash
-      poetry run uvicorn app.main:app --reload
+      poetry run uvicorn app.main:app --reload --host 0.0.0.0
       ```
+      The host 0.0.0.0 allows external access from my phone when on the same wifi as my mac.
 
 - **Use Postman to test the API**
     - You can now send requests to `http://localhost:8000` and interact with the app.
