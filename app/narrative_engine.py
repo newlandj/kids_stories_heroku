@@ -5,34 +5,36 @@ AI pipeline logic:
 import os
 import logging
 import random
-from typing import List, Optional
+from typing import List, Optional, Dict
 import time
 import asyncio
 import json
+import uuid
+import base64
 
 # For API operations
 import openai
-from openai import OpenAI
+from openai import OpenAI, AsyncOpenAI
 import httpx
 
 # For file operations
 import io
 import tempfile
 import boto3
-from urllib.parse import urlparse
 from PIL import Image
+from urllib.parse import urlparse
 import requests
-from app.storage import upload_file_to_s3
 
 # Local imports
-from app.content_safety import ContentScreener
 from app.settings import AppConfig
+from app.storage import upload_file_to_s3
+from app.utils import log_memory_usage
+from app.translation_service import TranslationService
+from app.models import SupportedLanguage
+from app.content_safety import ContentScreener
 
 # Configure logging
 logger = logging.getLogger("kids-story-lambda")
-from app.utils import log_memory_usage
-
-import asyncio
 
 class FableFactory:
     
@@ -230,6 +232,107 @@ class FableFactory:
         # Fallback
         return self._generate_fallback_story(prompt)
 
+    async def generate_story_with_translations(self, prompt: str, target_languages: List[SupportedLanguage] = None) -> dict:
+        """
+        Generate a story package with optional translations to multiple languages.
+        
+        Args:
+            prompt: The story generation prompt
+            target_languages: List of languages to translate to (excluding English)
+            
+        Returns:
+            Dictionary containing story data for all requested languages
+        """
+        # Generate the original English story
+        english_story = await self.generate_story_package(prompt)
+        
+        if not target_languages:
+            return {"en": english_story}
+        
+        # Initialize translation service
+        translation_service = TranslationService()
+        
+        # Create translation tasks for each target language
+        translation_tasks = []
+        for language in target_languages:
+            if language != SupportedLanguage.ENGLISH:
+                task = self._generate_translated_story(english_story, language, translation_service)
+                translation_tasks.append((language, task))
+        
+        # Execute all translations in parallel
+        if translation_tasks:
+            logger.info(f"Starting translation to {len(translation_tasks)} languages")
+            translation_results = await asyncio.gather(
+                *[task for _, task in translation_tasks], 
+                return_exceptions=True
+            )
+            
+            # Compile results
+            story_data = {"en": english_story}
+            
+            for i, (language, _) in enumerate(translation_tasks):
+                result = translation_results[i]
+                if isinstance(result, Exception):
+                    logger.error(f"Translation to {language.value} failed: {result}")
+                    # Use English as fallback
+                    story_data[language.value] = english_story
+                else:
+                    story_data[language.value] = result
+                    
+            return story_data
+        
+        return {"en": english_story}
+    
+    async def _generate_translated_story(self, english_story: dict, target_language: SupportedLanguage, translation_service: TranslationService) -> dict:
+        """
+        Generate a translated version of the story with new audio.
+        
+        Args:
+            english_story: The original English story data
+            target_language: Target language for translation
+            translation_service: Translation service instance
+            
+        Returns:
+            Translated story dictionary
+        """
+        # Translate all page texts
+        pages = english_story.get("pages", [])
+        translated_pages = await translation_service.translate_story_pages(pages, target_language)
+        
+        # Generate audio for translated pages using Nova voice
+        audio_tasks = [
+            self._generate_single_narration(page["translated_text"], idx, "nova")
+            for idx, page in enumerate(translated_pages)
+        ]
+        
+        logger.info(f"Generating audio for {len(translated_pages)} translated pages in {target_language.value}")
+        translated_audio = await asyncio.gather(*audio_tasks, return_exceptions=True)
+        
+        # Wire up the translated audio URLs
+        for idx, page in enumerate(translated_pages):
+            # Keep original image (reuse across languages)
+            if idx < len(translated_audio) and not isinstance(translated_audio[idx], Exception):
+                audio_result = translated_audio[idx]
+                page["audioUrl"] = audio_result.get("audio_url")
+            else:
+                logger.warning(f"Failed to generate audio for page {idx} in {target_language.value}")
+                page["audioUrl"] = None
+        
+        # Create translated story structure
+        translated_story = {
+            "title": english_story.get("title"),  # Keep English title for now
+            "characters": english_story.get("characters"),  # Keep English character descriptions
+            "pages": translated_pages,
+            "visual_elements": english_story.get("visual_elements"),  # Reuse images
+            "audio_narration": [{"page_index": i, "audio_url": page.get("audioUrl")} for i, page in enumerate(translated_pages)],
+            "word_count": sum(len(page.get("translated_text", "").split()) for page in translated_pages),
+            "illustration_count": english_story.get("illustration_count"),
+            "page_count": len(translated_pages),
+            "language": target_language.value
+        }
+        
+        return translated_story
+
     async def _generate_single_illustration(self, page_prompt, idx, art_direction):
         log_memory_usage(f"narrative_engine.FableFactory._generate_single_illustration: start idx={idx}")
         if os.environ.get("USE_DUMMY_AI", "false").lower() in ("true", "1", "yes") or \
@@ -253,20 +356,10 @@ class FableFactory:
 
     def _select_voice_for_story(self, text):
         """
-        Selects a TTS voice based on story keywords.
-        - Adventure/brave/exciting: 'alloy'
-        - Sweet/gentle/kind: 'nova'
-        - Mystery/dark: 'echo'
-        - Default: 'onyx'
+        DEPRECATED: Always use Nova voice for consistency across languages.
+        This method is kept for backward compatibility but will always return 'nova'.
         """
-        t = text.lower() if text else ""
-        if any(word in t for word in ["adventure", "brave", "exciting", "explore", "journey"]):
-            return "alloy"
-        if any(word in t for word in ["sweet", "gentle", "kind", "love", "friend"]):
-            return "nova"
-        if any(word in t for word in ["mystery", "dark", "secret", "shadow", "spooky"]):
-            return "echo"
-        return "onyx"
+        return "nova"
 
     async def _generate_single_narration(self, page_text, idx, voice):
         log_memory_usage(f"narrative_engine.FableFactory._generate_single_narration: start idx={idx}")

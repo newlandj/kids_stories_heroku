@@ -4,8 +4,16 @@ from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 from app.db import Base
 import uuid
+import enum
 
 from sqlalchemy.orm import relationship
+
+class SupportedLanguage(enum.Enum):
+    ENGLISH = "en"
+    SPANISH = "es"
+    CHINESE = "zh"
+    FRENCH = "fr"
+    PORTUGUESE = "pt"
 
 class Book(Base):
     __tablename__ = "books"
@@ -30,9 +38,14 @@ class Page(Base):
     page_id: Mapped[int] = mapped_column(sa.Integer, primary_key=True, autoincrement=True)
     book_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), sa.ForeignKey("books.book_id"), nullable=False)
     order: Mapped[int] = mapped_column(sa.Integer, nullable=False)  # page order in the story
+    language: Mapped[SupportedLanguage] = mapped_column(sa.Enum(SupportedLanguage), nullable=False, default=SupportedLanguage.ENGLISH)  # language code
     text: Mapped[str] = mapped_column(sa.Text, nullable=False)
     image_prompt: Mapped[str] = mapped_column(sa.Text, nullable=True)
     image_url: Mapped[str] = mapped_column(sa.Text, nullable=True)  # URL or path to generated image
     audio_url: Mapped[str] = mapped_column(sa.Text, nullable=True)  # URL or path to audio recording
 
     book = relationship("Book", back_populates="pages")
+    
+    __table_args__ = (
+        sa.UniqueConstraint('book_id', 'order', 'language', name='unique_page_per_language'),
+    )
