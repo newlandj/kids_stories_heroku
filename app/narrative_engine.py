@@ -369,6 +369,7 @@ class FableFactory:
         if os.environ.get("USE_DUMMY_AI", "false").lower() in ("true", "1", "yes") or \
            os.environ.get("MOCK_AUDIO", "false").lower() in ("true", "1", "yes"):
             return {"audio_url": f"https://kids-story-assets-dev.s3.us-west-1.amazonaws.com/audio/dummy-narration-{idx}.mp3", "page_index": idx}
+        
         client = getattr(self, "client", openai)
         resp = await asyncio.to_thread(
             client.audio.speech.create,
