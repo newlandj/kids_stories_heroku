@@ -1,12 +1,10 @@
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 from app.db import Base
 import uuid
 import enum
-
-from sqlalchemy.orm import relationship
 
 class SupportedLanguage(enum.Enum):
     ENGLISH = "en"
@@ -14,6 +12,15 @@ class SupportedLanguage(enum.Enum):
     CHINESE = "zh"
     FRENCH = "fr"
     PORTUGUESE = "pt"
+
+class DifficultyLevel(enum.IntEnum):
+    """Age-based difficulty levels for reading comprehension"""
+    LEVEL_0 = 0  # Ages 3-4 (Pre-reading)
+    LEVEL_1 = 1  # Age 5 (Beginning sounds)
+    LEVEL_2 = 2  # Age 6 (Early reading) - DEFAULT
+    LEVEL_3 = 3  # Age 7 (Developing reading)
+    LEVEL_4 = 4  # Age 8 (Fluent reading)
+    # Levels 5-10 reserved for future expansion
 
 class Book(Base):
     __tablename__ = "books"
@@ -23,6 +30,8 @@ class Book(Base):
     prompt: Mapped[str] = mapped_column(sa.Text, nullable=False)
     status: Mapped[str] = mapped_column(sa.String(32), nullable=False, default="pending")
     title: Mapped[str] = mapped_column(sa.String, nullable=True)
+    difficulty_level: Mapped[int] = mapped_column(sa.Integer, nullable=False, default=2)  # Default to Level 2 (Age 6)
+    calculated_readability_score: Mapped[float] = mapped_column(sa.Float, nullable=True)  # Flesch-Kincaid grade level
     created_at: Mapped[sa.DateTime] = mapped_column(sa.DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[sa.DateTime] = mapped_column(
         sa.DateTime(timezone=True),

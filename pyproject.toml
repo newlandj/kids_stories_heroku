@@ -14,6 +14,7 @@ boto3 = "^1.38.0"         # AWS S3 for file storage
 celery = "^5.4"
 httpx = "^0.28.1"          # HTTP client for async calls
 fastapi = "^0.115.0"
+nltk = "^3.9"              # Natural Language Toolkit for readability analysis
 openai = "^1.77.0"        # OpenAI API client
 pillow = "^11.1.0"         # Image processing
 psycopg2-binary = "^2.9.9"  # PostgreSQL driver for Heroku and local testing

@@ -8,10 +8,11 @@ from celery import Celery
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from app.models import Book, Page, SupportedLanguage
-from app.crud import create_pages
+from app.crud import create_pages, update_book_readability_score
 from app.db import Base, DATABASE_URL
 from app.narrative_engine import FableFactory
 from app.utils import log_memory_usage
+from app.readability_analyzer import ReadabilityAnalyzer
 
 redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
 
@@ -52,7 +53,7 @@ engine = create_engine(db_url_sync)
 Session = sessionmaker(bind=engine)
 
 @celery_app.task(bind=True)
-def generate_book_task(self, book_id, prompt, target_languages=None):
+def generate_book_task(self, book_id, prompt, target_languages=None, difficulty_level=None):
     """
     Generate a book with optional multi-language support.
     
@@ -60,6 +61,7 @@ def generate_book_task(self, book_id, prompt, target_languages=None):
         book_id: UUID of the book to generate
         prompt: Story generation prompt
         target_languages: Optional list of language codes to translate to
+        difficulty_level: Optional difficulty level for readability analysis
     """
     log_memory_usage("celery_worker.generate_book_task: start")
     session = Session()
@@ -95,9 +97,37 @@ def generate_book_task(self, book_id, prompt, target_languages=None):
             story_data = {"en": english_story}
             log_memory_usage("celery_worker.generate_book_task: after English story generation")
         
+        # Perform readability analysis on English story (always present)
+        english_story = story_data.get("en", {})
+        if difficulty_level and english_story:
+            try:
+                readability_analyzer = ReadabilityAnalyzer()
+                # Get full story text from all English pages
+                english_pages = english_story.get("pages", [])
+                full_story_text = " ".join([page.get("text", "") for page in english_pages])
+                
+                if full_story_text.strip():
+                    analysis_result = readability_analyzer.analyze_text(full_story_text)
+                    
+                    if analysis_result and 'grade_level' in analysis_result:
+                        readability_score = analysis_result['grade_level']
+                        
+                        # Update the book's readability score
+                        book.calculated_readability_score = readability_score
+                        session.commit()
+                        
+                        print(f"Book {book_id}: Target difficulty {difficulty_level}, Calculated readability score: {readability_score:.2f}")
+                        print(f"Analysis details: {analysis_result}")
+                    else:
+                        print(f"Warning: Readability analysis returned no results for book {book_id}")
+                else:
+                    print(f"Warning: No story text found for readability analysis for book {book_id}")
+            except Exception as e:
+                print(f"Warning: Readability analysis failed for book {book_id}: {e}")
+                # Don't fail the entire task if readability analysis fails
+        
         # Update book with result
         book.status = "ready"
-        english_story = story_data.get("en", {})
         book.title = english_story.get("title")  # Save generated title
         
         # Save pages for all languages to the DB
