@@ -1,1 +1,1 @@
-cmudict 
+cmudict
