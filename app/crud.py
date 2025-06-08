@@ -6,7 +6,7 @@ from app.models import Book, Page, SupportedLanguage
 from app.content_safety import ContentScreener
 from typing import List
 
-async def create_book(session: AsyncSession, prompt: str, request_id: str, title: str = None):
+async def create_book(session: AsyncSession, prompt: str, request_id: str, title: str = None, difficulty_level: int = 2, calculated_readability_score: float = None):
     print("Creating book...")
     screener = ContentScreener()
     screener.validate_prompt(prompt)
@@ -15,7 +15,9 @@ async def create_book(session: AsyncSession, prompt: str, request_id: str, title
         request_id=request_id,
         prompt=prompt,
         status="pending",
-        title=title
+        title=title,
+        difficulty_level=difficulty_level,
+        calculated_readability_score=calculated_readability_score
     )
     session.add(book)
     try:
@@ -133,5 +135,15 @@ async def update_book_title(session: AsyncSession, book_id: uuid.UUID, title: st
     if not book:
         return None
     book.title = title
+    await session.commit()
+    return book
+
+async def update_book_readability_score(session: AsyncSession, book_id: uuid.UUID, calculated_readability_score: float):
+    """Update the calculated readability score for a book."""
+    q = await session.execute(select(Book).where(Book.book_id == book_id))
+    book = q.scalar_one_or_none()
+    if not book:
+        return None
+    book.calculated_readability_score = calculated_readability_score
     await session.commit()
     return book

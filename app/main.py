@@ -33,6 +33,7 @@ class BookCreateRequest(BaseModel):
     prompt: str
     request_id: str
     target_languages: Optional[List[str]] = None  # List of language codes like ["es", "zh", "fr"]
+    difficulty_level: Optional[int] = 2  # Age-based difficulty level (0-10), default to Level 2 (Age 6)
 
 class TranslationRequest(BaseModel):
     book_id: str
@@ -52,6 +53,8 @@ class BookResponse(BaseModel):
     title: Optional[str] = None
     pages: List[PageResponse] = []
     available_languages: Optional[List[str]] = None
+    difficulty_level: Optional[int] = None
+    calculated_readability_score: Optional[float] = None
 
 # --- Redis-based status tracking ---
 BOOK_PREFIX = "book:"
@@ -71,10 +74,12 @@ async def create_book_endpoint(req: BookCreateRequest, db: AsyncSession = Depend
             status=existing.status,
             title=existing.title,
             pages=[PageResponse(order=p.order, text=p.text, image_prompt=p.image_prompt, audio_url=p.audio_url, image_url=p.image_url, language=p.language.value) for p in pages],
-            available_languages=available_languages
+            available_languages=available_languages,
+            difficulty_level=existing.difficulty_level,
+            calculated_readability_score=existing.calculated_readability_score
         )
     # Otherwise, create a new book
-    book = await create_book(db, req.prompt, req.request_id)
+    book = await create_book(db, req.prompt, req.request_id, None, req.difficulty_level)
     
     # Validate target languages if provided
     target_languages = []
@@ -87,9 +92,9 @@ async def create_book_endpoint(req: BookCreateRequest, db: AsyncSession = Depend
                 raise HTTPException(status_code=400, detail=f"Unsupported language: {lang_code}")
     
     # Enqueue Celery task with target languages
-    generate_book_task.delay(str(book.book_id), req.prompt, target_languages if target_languages else None)
+    generate_book_task.delay(str(book.book_id), req.prompt, target_languages if target_languages else None, req.difficulty_level)
     log_memory_usage("main.create_book_endpoint: after enqueue")
-    return BookResponse(book_id=str(book.book_id), status=book.status, title=book.title, pages=[])
+    return BookResponse(book_id=str(book.book_id), status=book.status, title=book.title, pages=[], difficulty_level=book.difficulty_level, calculated_readability_score=book.calculated_readability_score)
 
 @app.get("/books/{book_id}", response_model=BookResponse)
 async def get_book_endpoint(book_id: str, language: Optional[str] = "en", db: AsyncSession = Depends(get_db)):
@@ -118,7 +123,9 @@ async def get_book_endpoint(book_id: str, language: Optional[str] = "en", db: As
         status=book.status,
         title=book.title,
         pages=[PageResponse(order=p.order, text=p.text, image_prompt=p.image_prompt, audio_url=p.audio_url, image_url=p.image_url, language=p.language.value) for p in pages],
-        available_languages=available_languages
+        available_languages=available_languages,
+        difficulty_level=book.difficulty_level,
+        calculated_readability_score=book.calculated_readability_score
     )
 
 @app.post("/books/{book_id}/translate")
