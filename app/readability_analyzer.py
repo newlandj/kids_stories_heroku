@@ -34,9 +34,22 @@ class ReadabilityAnalyzer:
                 logger.info("CMU pronunciation dictionary loaded successfully")
             except LookupError:
                 logger.info("Downloading CMU pronunciation dictionary...")
-                nltk.download('cmudict', quiet=True)
-                self.pronunciation_dict = cmudict.dict()
-                logger.info("CMU pronunciation dictionary downloaded and loaded")
+                try:
+                    # Set NLTK data path to avoid permission issues on Heroku
+                    import os
+                    nltk_data_path = os.path.join(os.getcwd(), 'nltk_data')
+                    if not os.path.exists(nltk_data_path):
+                        os.makedirs(nltk_data_path)
+                    nltk.data.path.append(nltk_data_path)
+                    
+                    # Download with timeout and error handling
+                    nltk.download('cmudict', quiet=True, download_dir=nltk_data_path)
+                    self.pronunciation_dict = cmudict.dict()
+                    logger.info("CMU pronunciation dictionary downloaded and loaded")
+                except Exception as download_error:
+                    logger.warning(f"Failed to download NLTK data: {download_error}")
+                    logger.warning("Falling back to simple syllable counting method")
+                    self.pronunciation_dict = None
                 
         except ImportError:
             logger.error("NLTK not available. Install with: pip install nltk")
