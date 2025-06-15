@@ -4,7 +4,10 @@ load_dotenv()
 import os
 import asyncio
 import gc
+import time
 from celery import Celery
+from celery.signals import worker_ready
+from datetime import datetime, timezone
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from app.models import Book, Page, SupportedLanguage
@@ -52,6 +55,21 @@ db_url_sync = DATABASE_URL.replace("+asyncpg", "") if "+asyncpg" in DATABASE_URL
 engine = create_engine(db_url_sync)
 Session = sessionmaker(bind=engine)
 
+async def generate_media_and_translations_parallel(factory, chosen_text_story, prompt, target_language_enums):
+    """Helper function to run media generation and translation in parallel"""
+    if target_language_enums:
+        # Start translations only - media is already generated in Phase 2
+        translation_data = await factory.generate_story_with_translations(
+            prompt, target_language_enums, chosen_text_story
+        )
+        # Combine English story with translations
+        story_data = {"en": chosen_text_story}  # Use the story with media from Phase 2
+        story_data.update(translation_data)
+        return story_data
+    else:
+        # No translations needed, just return the story with media from Phase 2
+        return {"en": chosen_text_story}
+
 @celery_app.task(bind=True)
 def generate_book_task(self, book_id, prompt, target_languages=None, difficulty_level=None):
     """
@@ -85,88 +103,15 @@ def generate_book_task(self, book_id, prompt, target_languages=None, difficulty_
                 except ValueError:
                     print(f"Warning: Invalid language code {lang_code}, skipping")
         
-        # Generate story package with readability checking and potential retry
+        # Generate story package with readability checking and translations in parallel
         factory = FableFactory()
+        story_data = asyncio.run(factory.generate_story_with_readability_check_first(
+            prompt, 
+            difficulty_level=difficulty_level,
+            target_languages=target_language_enums
+        ))
         
-        # Step 1: Generate initial English story
-        english_story = asyncio.run(factory.generate_story_package(prompt, difficulty_level))
-        log_memory_usage("celery_worker.generate_book_task: after initial story generation")
-        
-        # Step 2: Check readability and potentially retry
-        if difficulty_level is not None:
-            try:
-                readability_analyzer = ReadabilityAnalyzer()
-                # Get full story text from all English pages
-                english_pages = english_story.get("pages", [])
-                full_story_text = " ".join([page.get("text", "") for page in english_pages])
-                
-                if full_story_text.strip():
-                    analysis_result = readability_analyzer.analyze_text(full_story_text)
-                    
-                    if analysis_result and 'grade_level' in analysis_result:
-                        calculated_score = analysis_result['grade_level']
-                        score_difference = abs(calculated_score - difficulty_level)
-                        
-                        print(f"Book {book_id}: Target={difficulty_level}, Calculated={calculated_score:.2f}, Difference={score_difference:.2f}")
-                        
-                        # Retry if more than 1 grade level off
-                        if score_difference > 1.0:
-                            print(f"Book {book_id}: Retrying due to readability mismatch (>{calculated_score:.2f} vs target {difficulty_level})")
-                            
-                            # Generate retry with feedback
-                            retry_story = asyncio.run(
-                                factory.generate_story_with_readability_feedback(
-                                    prompt, difficulty_level, calculated_score, english_story
-                                )
-                            )
-                            log_memory_usage("celery_worker.generate_book_task: after readability retry")
-                            
-                            # Analyze the retry
-                            retry_pages = retry_story.get("pages", [])
-                            retry_text = " ".join([page.get("text", "") for page in retry_pages])
-                            
-                            if retry_text.strip():
-                                retry_analysis = readability_analyzer.analyze_text(retry_text)
-                                
-                                if retry_analysis and 'grade_level' in retry_analysis:
-                                    retry_score = retry_analysis['grade_level']
-                                    retry_difference = abs(retry_score - difficulty_level)
-                                    
-                                    print(f"Book {book_id}: Retry score={retry_score:.2f}, difference={retry_difference:.2f}")
-                                    
-                                    # Keep whichever story is closer to target
-                                    if retry_difference < score_difference:
-                                        print(f"Book {book_id}: Using retry version (closer to target)")
-                                        english_story = retry_story
-                                        calculated_score = retry_score
-                                    else:
-                                        print(f"Book {book_id}: Keeping original version (closer to target)")
-                                else:
-                                    print(f"Book {book_id}: Could not analyze retry, keeping original")
-                            else:
-                                print(f"Book {book_id}: Retry produced no text, keeping original")
-                        else:
-                            print(f"Book {book_id}: Readability within acceptable range")
-                            
-                    else:
-                        print(f"Warning: Readability analysis returned no results for book {book_id}")
-                else:
-                    print(f"Warning: No story text found for readability analysis for book {book_id}")
-            except Exception as e:
-                print(f"Warning: Readability analysis/retry failed for book {book_id}: {e}")
-                # Don't fail the entire task if readability analysis fails
-        
-        # Step 3: Generate translations if requested
-        if target_language_enums:
-            # Generate with translations using the final English story
-            story_data = asyncio.run(factory.generate_story_with_translations(prompt, [SupportedLanguage.ENGLISH] + target_language_enums))
-            # Replace the English story with our potentially retried version
-            story_data["en"] = english_story
-            log_memory_usage("celery_worker.generate_book_task: after multi-language story generation")
-        else:
-            # English only
-            story_data = {"en": english_story}
-            log_memory_usage("celery_worker.generate_book_task: after English story generation")
+        log_memory_usage("celery_worker.generate_book_task: story generation complete")
         
         # Update the book's readability score with final calculated score
         english_story = story_data.get("en", {})
@@ -193,7 +138,7 @@ def generate_book_task(self, book_id, prompt, target_languages=None, difficulty_
             except Exception as e:
                 print(f"Warning: Final readability analysis failed for book {book_id}: {e}")
         
-        # Update book with result
+        # Update book status and title
         book.status = "ready"
         book.title = english_story.get("title")  # Save generated title
         
@@ -233,7 +178,7 @@ def generate_book_task(self, book_id, prompt, target_languages=None, difficulty_
         
         return {
             "status": "ready", 
-            "book_id": book_id, 
+            "book_id": book_id,
             "languages": list(story_data.keys()) if 'story_data' in locals() else ["en"]
         }
         
