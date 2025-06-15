@@ -1,5 +1,6 @@
-import os
 import logging
+import os
+
 
 def log_memory_usage(context: str = ""):
     """
@@ -9,6 +10,7 @@ def log_memory_usage(context: str = ""):
     """
     try:
         import psutil
+
         process = psutil.Process(os.getpid())
         mem = process.memory_info().rss / (1024 * 1024)  # in MB
         logging.info(f"[MEMORY] {context} | RSS: {mem:.2f} MB")

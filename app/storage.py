@@ -1,7 +1,9 @@
 import os
+import uuid
+
 import boto3
 from botocore.exceptions import ClientError
-import uuid
+
 
 def get_s3_client():
     return boto3.client(
@@ -11,7 +13,9 @@ def get_s3_client():
         region_name=os.environ.get("AWS_DEFAULT_REGION"),
     )
 
+
 BUCKET_NAME = os.environ.get("S3_BUCKET_NAME")
+
 
 def upload_file_to_s3(file_data: bytes, file_type: str, extension: str) -> str:
     """
