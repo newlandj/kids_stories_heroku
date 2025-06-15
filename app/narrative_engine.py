@@ -12,10 +12,8 @@ import json
 import uuid
 import base64
 
-# For API operations
-import openai
 from openai import OpenAI, AsyncOpenAI
-import httpx
+from pydantic import BaseModel
 
 # For file operations
 import io
@@ -37,6 +35,22 @@ from app.readability_analyzer import ReadabilityAnalyzer
 
 # Configure logging
 logger = logging.getLogger("kids-story-lambda")
+
+OPEN_AI_MODEL = "gpt-4.1"  # Alternates: gpt-4o, gpt-4o-mini, gpt-4.1-mini
+
+# Pydantic models for structured outputs
+class Character(BaseModel):
+    name: str
+    description: str
+
+class StoryPage(BaseModel):
+    text: str
+    imagePrompt: str
+
+class StoryStructure(BaseModel):
+    title: str
+    characters: List[Character]
+    pages: List[StoryPage]
 
 class FableFactory:
     
@@ -256,60 +270,6 @@ class FableFactory:
             }
         self.content_screener.validate_prompt(prompt)
 
-        # Define the function schema for OpenAI tool calling
-        function_schema = {
-            "name": "create_story",
-            "description": "Generate a JSON children's story with title, characters, and pages.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "title": {"type": "string", "description": "The story title."},
-                    "characters": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "name": {"type": "string", "description": "Character name."},
-                                "description": {
-                                    "type": "string",
-                                    "description": """
-                                        Character appearance and traits. The intent of this section is to 
-                                        provide a consistent description of the character that can be 
-                                        used across all pages of the story. Please be specific and 
-                                        make sure to mention the color of the animal, or the skin tone, age,
-                                        hair color, etc. if it's a human. 
-                                    """
-                                }
-                            },
-                            "required": ["name", "description"]
-                        },
-                        "description": "List of characters with descriptions."
-                    },
-                    "pages": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "text": {"type": "string", "description": "Page story text."},
-                                "imagePrompt": {
-                                    "type": "string",
-                                    "description": """
-                                        Detailed illustration prompt for this page, including character names and
-                                        anything specific they're doing. The detailed descriptions of what the charactesr
-                                        look like will be passed into this prompt separately, so focus on the character names
-                                        and the actions they're taking. 
-                                        """
-                                }
-                            },
-                            "required": ["text", "imagePrompt"]
-                        },
-                        "description": "Pages of the story."
-                    }
-                },
-                "required": ["title", "characters", "pages"]
-            }
-        }
-
         # Build system prompt with difficulty level guidance
         base_prompt = (
             "You are a children's story writer creating engaging, age-appropriate stories for children. "
@@ -334,36 +294,42 @@ class FableFactory:
             system_prompt = f"{base_prompt}\n\n{difficulty_prompt}"
         else:
             system_prompt = base_prompt
-        user_message = f"Create a children's story about: {prompt}. Please ensure your response includes a creative, appropriate title for the book, returned as the 'title' field in the structured JSON output."
+
+        user_message = f"Create a children's story about: {prompt}. Please ensure your response includes a creative, appropriate title for the book."
 
         attempts, backoff = 3, 1
         for i in range(attempts):
             try:
-                resp = await asyncio.to_thread(
-                    self.client.chat.completions.create,
-                    model="gpt-4o",
-                    messages=[{"role": "system", "content": system_prompt},
-                              {"role": "user", "content": user_message}],
+                completion = await asyncio.to_thread(
+                    self.client.responses.parse,
+                    model=OPEN_AI_MODEL,
+                    input=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_message}
+                    ],
+                    text_format=StoryStructure,
                     temperature=0.7 + i*0.1,
-                    max_tokens=1800,
-                    presence_penalty=0.6,
-                    frequency_penalty=0.5,
-                    tools=[{"type": "function", "function": function_schema}],
-                    tool_choice={"type": "function", "function": {"name": "create_story"}}
+                    max_output_tokens=1800
                 )
-                tool_calls = resp.choices[0].message.tool_calls
-                if tool_calls and len(tool_calls) > 0:
-                    arguments = tool_calls[0].function.arguments
-                    # arguments is a JSON string, parse it
-                    story_json = json.loads(arguments)
-                    return story_json
-                else:
-                    logger.error("No tool_calls found in OpenAI response.")
+                
+                # The response is already parsed into our Pydantic model
+                story_data = completion.output_parsed
+                
+                # Convert to dict format for compatibility with existing code
+                return {
+                    "title": story_data.title,
+                    "characters": [{"name": char.name, "description": char.description} for char in story_data.characters],
+                    "pages": [{"text": page.text, "imagePrompt": page.imagePrompt} for page in story_data.pages]
+                }
+                
             except Exception as e:
                 logger.error(f"weave_narrative error {i}: {e}")
                 if i < attempts-1:
-                    await asyncio.sleep(backoff); backoff *= 2
-        # Fallback
+                    await asyncio.sleep(backoff)
+                    backoff *= 2
+
+        # Fallback if all attempts fail
+        logger.warning("All structured output attempts failed, using fallback story")
         return self._generate_fallback_story(prompt)
     
     def _get_difficulty_guidance(self, difficulty_level: int) -> str:
@@ -424,152 +390,41 @@ Keep sentences and vocabulary appropriate for the target age group. Make sure yo
             prompt, target_level, current_score, previous_text
         )
         
-        # Use the same function schema as regular story generation
-        function_schema = {
-            "name": "create_story",
-            "description": "Generate a JSON children's story with title, characters, and pages.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "title": {"type": "string", "description": "The story title."},
-                    "characters": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "name": {"type": "string", "description": "Character name."},
-                                "description": {
-                                    "type": "string",
-                                    "description": "Character appearance and traits for consistent illustration."
-                                }
-                            },
-                            "required": ["name", "description"]
-                        },
-                        "description": "List of characters with descriptions."
-                    },
-                    "pages": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "text": {"type": "string", "description": "Page story text."},
-                                "imagePrompt": {
-                                    "type": "string",
-                                    "description": "Detailed illustration prompt for this page."
-                                }
-                            },
-                            "required": ["text", "imagePrompt"]
-                        },
-                        "description": "Pages of the story."
-                    }
-                },
-                "required": ["title", "characters", "pages"]
-            }
-        }
-        
-        # If not using dummy AI, try OpenAI API
-        if self.client is not None:
-            attempts, backoff = 3, 1
-            for i in range(attempts):
-                try:
-                    resp = await asyncio.to_thread(
-                        self.client.chat.completions.create,
-                        model="gpt-4o",
-                        messages=[{"role": "system", "content": feedback_prompt},
-                                  {"role": "user", "content": f"Rewrite the story about: {prompt}. Adjust the complexity to better match Grade Level {target_level}."}],
-                        temperature=0.7 + i*0.1,
-                        max_tokens=1800,
-                        presence_penalty=0.6,
-                        frequency_penalty=0.5,
-                        tools=[{"type": "function", "function": function_schema}],
-                        tool_choice={"type": "function", "function": {"name": "create_story"}}
-                    )
-                    tool_calls = resp.choices[0].message.tool_calls
-                    if tool_calls and len(tool_calls) > 0:
-                        arguments = tool_calls[0].function.arguments
-                        story_json = json.loads(arguments)
-                        # Generate images and audio for the retry story
-                        complete_story = await self._generate_retry_story_with_media(story_json)
-                        return complete_story
-                    else:
-                        logger.error("No tool_calls found in readability feedback response.")
-                except Exception as e:
-                    logger.error(f"generate_story_with_readability_feedback error {i}: {e}")
-                    if i < attempts-1:
-                        await asyncio.sleep(backoff); backoff *= 2
-        
-        # If we get here, OpenAI retry failed, fallback to original story
-        logger.warning("Readability feedback retry failed, returning original story")
-        return previous_story
-    
-    async def _generate_retry_story_with_media(self, story_data: dict) -> dict:
-        """Generate images and audio for a retry story, similar to generate_story_package."""
-        log_memory_usage("narrative_engine.FableFactory._generate_retry_story_with_media: start")
-        
-        pages = story_data.get("pages", [])
-        if not pages:
-            return story_data
-        
-        # Generate images sequentially and audio in parallel (same pattern as generate_story_package)
-        character_descriptions = ", ".join([f"{c['name']}: {c['description']}" for c in story_data.get("characters", [])])
-        
-        # Generate images in small batches to balance speed and rate limits
-        visual_elements = []
-        batch_size = 2  # Generate 2 images at a time
-        
-        for i in range(0, len(pages), batch_size):
-            batch_pages = pages[i:i + batch_size]
-            batch_tasks = []
-            
-            for j, page in enumerate(batch_pages):
-                idx = i + j
-                task = self._generate_single_illustration_with_retry(
-                    f"{character_descriptions}. {page['imagePrompt']}", 
-                    idx, 
-                    art_direction=None
+        # Generate retry story with structured output
+        attempts, backoff = 3, 1
+        for i in range(attempts):
+            try:
+                completion = await asyncio.to_thread(
+                    self.client.responses.parse,
+                    model=OPEN_AI_MODEL,
+                    input=[
+                        {"role": "system", "content": feedback_prompt},
+                        {"role": "user", "content": f"Rewrite the story about: {prompt}. Adjust the complexity to better match Grade Level {target_level}."}
+                    ],
+                    text_format=StoryStructure,
+                    temperature=0.7 + i*0.1,
+                    max_output_tokens=1800
                 )
-                batch_tasks.append((idx, task))
-            
-            # Execute batch in parallel
-            batch_results = await asyncio.gather(
-                *[task for _, task in batch_tasks], 
-                return_exceptions=True
-            )
-            
-            # Process results
-            for j, ((idx, _), result) in enumerate(zip(batch_tasks, batch_results)):
-                if isinstance(result, Exception):
-                    logger.error(f"Failed to generate image for page {idx} in retry: {result}")
-                    visual_elements.append(f"https://kids-story-assets-dev.s3.us-west-1.amazonaws.com/images/placeholder-{idx}.webp")
-                else:
-                    visual_elements.append(result)
-            
-            # Small delay between batches (but not after the last batch)
-            if i + batch_size < len(pages):
-                await asyncio.sleep(1)
+                
+                # The response is already parsed into our Pydantic model
+                story_data = completion.output_parsed
+                
+                # Convert to dict format for compatibility with existing code
+                return {
+                    "title": story_data.title,
+                    "characters": [{"name": char.name, "description": char.description} for char in story_data.characters],
+                    "pages": [{"text": page.text, "imagePrompt": page.imagePrompt} for page in story_data.pages]
+                }
+                
+            except Exception as e:
+                logger.error(f"generate_story_with_readability_feedback error {i}: {e}")
+                if i < attempts-1:
+                    await asyncio.sleep(backoff)
+                    backoff *= 2
         
-        # Generate audio in parallel (audio API is more forgiving)
-        voice = self._select_voice_for_story(pages[0]["text"] if pages else "")
-        audio_tasks = [
-            self._generate_single_narration(page["text"], idx, voice)
-            for idx, page in enumerate(pages)
-        ]
-        audio_narration = await asyncio.gather(*audio_tasks, return_exceptions=True)
-        
-        # Wire URLs into pages
-        for idx, page in enumerate(pages):
-            if idx < len(visual_elements):
-                page["imageUrl"] = visual_elements[idx]
-            # Handle audio results (could be exceptions)
-            if idx < len(audio_narration) and not isinstance(audio_narration[idx], Exception):
-                audio = audio_narration[idx]
-                page["audioUrl"] = audio["audio_url"]
-            else:
-                logger.warning(f"Failed to generate audio for page {idx} in retry")
-                page["audioUrl"] = None
-        
-        log_memory_usage("narrative_engine.FableFactory._generate_retry_story_with_media: end")
-        return story_data
+        # If we get here, all attempts failed
+        logger.warning("Readability feedback retry failed, returning None")
+        return None
     
     def _create_readability_feedback_prompt(self, original_prompt: str, target_level: int, current_score: float, previous_text: str) -> str:
         """Create a prompt for readability adjustment based on previous attempt."""
@@ -681,15 +536,8 @@ Create detailed character descriptions and image prompts as before. Return the r
     
     async def _generate_translated_story(self, english_story: dict, target_language: SupportedLanguage, translation_service: TranslationService) -> dict:
         """
-        Generate a translated version of the story with new audio.
-        
-        Args:
-            english_story: The original English story data
-            target_language: Target language for translation
-            translation_service: Translation service instance
-            
-        Returns:
-            Translated story dictionary
+        Generate a translated version of the story with new audio only.
+        Reuses English images for consistency.
         """
         # Translate all page texts
         pages = english_story.get("pages", [])
@@ -711,7 +559,7 @@ Create detailed character descriptions and image prompts as before. Return the r
             if idx < len(english_pages):
                 page["imageUrl"] = english_pages[idx].get("imageUrl")
             
-            # Keep original image (reuse across languages)
+            # Add translated audio if available
             if idx < len(translated_audio) and not isinstance(translated_audio[idx], Exception):
                 audio_result = translated_audio[idx]
                 page["audioUrl"] = audio_result.get("audio_url")
@@ -724,10 +572,10 @@ Create detailed character descriptions and image prompts as before. Return the r
             "title": english_story.get("title"),  # Keep English title for now
             "characters": english_story.get("characters"),  # Keep English character descriptions
             "pages": translated_pages,
-            "visual_elements": english_story.get("visual_elements"),  # Reuse images
+            "visual_elements": english_story.get("visual_elements"),  # Reuse English images
             "audio_narration": [{"page_index": i, "audio_url": page.get("audioUrl")} for i, page in enumerate(translated_pages)],
             "word_count": sum(len(page.get("translated_text", "").split()) for page in translated_pages),
-            "illustration_count": english_story.get("illustration_count"),
+            "illustration_count": english_story.get("illustration_count"),  # Same as English
             "page_count": len(translated_pages),
             "language": target_language.value
         }
@@ -805,25 +653,48 @@ Create detailed character descriptions and image prompts as before. Return the r
         """
         return "nova"
 
-    async def _generate_single_narration(self, page_text, idx, voice):
+    async def _generate_single_narration(self, page_text, idx, voice, max_retries=3):
+        """
+        Generate TTS audio for a page using OpenAI TTS with robust error handling and retries.
+        Returns S3 audio URL and page index.
+        """
         log_memory_usage(f"narrative_engine.FableFactory._generate_single_narration: start idx={idx}")
-        """
-        Generate TTS audio for a page using OpenAI TTS and return S3 audio URL and page index (no bytes in result).
-        """
-        if self.use_dummy_ai or \
-           os.environ.get("MOCK_AUDIO", "false").lower() in ("true", "1", "yes"):
+        
+        if self.use_dummy_ai or os.environ.get("MOCK_AUDIO", "false").lower() in ("true", "1", "yes"):
             return {"audio_url": f"https://kids-story-assets-dev.s3.us-west-1.amazonaws.com/audio/dummy-narration-{idx}.mp3", "page_index": idx}
         
-        resp = await asyncio.to_thread(
-            self.client.audio.speech.create,
-            model="tts-1",
-            voice=voice,
-            speed=0.9,
-            input=page_text
-        )
-        audio_bytes = resp.content if hasattr(resp, "content") else resp
-        audio_url = upload_file_to_s3(audio_bytes, file_type="audio", extension="mp3")
-        return {"audio_url": audio_url, "page_index": idx}
+        for attempt in range(max_retries):
+            try:
+                if attempt > 0:
+                    logger.info(f"Retrying audio generation for page {idx}, attempt {attempt + 1}/{max_retries}")
+                    await asyncio.sleep(2 ** attempt)  # Exponential backoff
+                
+                resp = await asyncio.to_thread(
+                    self.client.audio.speech.create,
+                    model="tts-1",
+                    voice=voice,
+                    speed=0.9,
+                    input=page_text
+                )
+                audio_bytes = resp.content if hasattr(resp, "content") else resp
+                audio_url = upload_file_to_s3(audio_bytes, file_type="audio", extension="mp3")
+                return {"audio_url": audio_url, "page_index": idx}
+                
+            except Exception as e:
+                error_msg = str(e).lower()
+                if "429" in error_msg or "rate limit" in error_msg:
+                    wait_time = (2 ** attempt) * 5  # Longer backoff for rate limits
+                    logger.warning(f"Rate limit hit for audio {idx}, attempt {attempt + 1}/{max_retries}. Waiting {wait_time}s...")
+                    if attempt < max_retries - 1:
+                        await asyncio.sleep(wait_time)
+                    else:
+                        logger.error(f"All retry attempts failed for audio {idx}: {e}")
+                        return {"audio_url": None, "page_index": idx, "error": str(e)}
+                else:
+                    logger.error(f"Error generating audio for page {idx}, attempt {attempt + 1}: {e}")
+                    if attempt == max_retries - 1:
+                        return {"audio_url": None, "page_index": idx, "error": str(e)}
+                    await asyncio.sleep(2)
 
     def _generate_fallback_story(self, prompt: str) -> dict:
         """Generate a fallback story when OpenAI fails"""
@@ -839,9 +710,18 @@ Create detailed character descriptions and image prompts as before. Return the r
             ]
         }
 
-    async def weave_narrative_text_only(self, prompt: str, difficulty_level: int = None) -> dict:
-        """Generate story text only using GPT-4o structured outputs, without images or audio.
-        This is for Phase 1 of the optimized workflow - fast text generation with readability checking."""
+    async def weave_narrative_text_only(self, prompt: str, difficulty_level: int = None, previous_story: dict = None, current_score: float = None) -> dict:
+        """Generate story text only using structured outputs, without images or audio.
+        
+        Args:
+            prompt: The story generation prompt
+            difficulty_level: Target reading level (0-8)
+            previous_story: Optional previous story for readability feedback
+            current_score: Optional readability score of previous story
+            
+        Returns:
+            Dictionary containing story structure
+        """
         log_memory_usage("narrative_engine.FableFactory.weave_narrative_text_only: start")
         
         if self.use_dummy_ai:
@@ -858,23 +738,6 @@ Create detailed character descriptions and image prompts as before. Return the r
             }
 
         self.content_screener.validate_prompt(prompt)
-
-        # Use structured outputs instead of function calling
-        from pydantic import BaseModel
-        from typing import List
-
-        class Character(BaseModel):
-            name: str
-            description: str
-
-        class StoryPage(BaseModel):
-            text: str
-            imagePrompt: str
-
-        class StoryStructure(BaseModel):
-            title: str
-            characters: List[Character]
-            pages: List[StoryPage]
 
         # Build system prompt with difficulty level guidance
         base_prompt = (
@@ -901,26 +764,37 @@ Create detailed character descriptions and image prompts as before. Return the r
         else:
             system_prompt = base_prompt
 
-        # Use GPT-4o with structured outputs
+        # Add readability feedback if provided
+        if previous_story and current_score is not None:
+            feedback_prompt = self._create_readability_feedback_prompt(
+                prompt, difficulty_level, current_score,
+                " ".join([page.get("text", "") for page in previous_story.get("pages", [])])
+            )
+            system_prompt = feedback_prompt
+            user_message = f"Rewrite the story about: {prompt}. Adjust the complexity to better match Grade Level {difficulty_level}."
+        else:
+            user_message = f"Create a children's story about: {prompt}"
+
+        # Generate story with structured output
         attempts, backoff = 3, 1
         for i in range(attempts):
             try:
-                # Use the new structured outputs API
                 completion = await asyncio.to_thread(
-                    self.client.beta.chat.completions.parse,
-                    model="gpt-4o",
-                    messages=[
+                    self.client.responses.parse,
+                    model=OPEN_AI_MODEL,
+                    input=[
                         {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": prompt}
+                        {"role": "user", "content": user_message}
                     ],
-                    response_format=StoryStructure,
+                    text_format=StoryStructure,
                     temperature=0.7 + i*0.1,
-                    max_tokens=1800
+                    max_output_tokens=1800
                 )
                 
-                story_data = completion.choices[0].message.parsed
+                # The response is already parsed into our Pydantic model
+                story_data = completion.output_parsed
                 
-                # Convert Pydantic model to dict for compatibility with existing code
+                # Convert to dict format for compatibility with existing code
                 return {
                     "title": story_data.title,
                     "characters": [{"name": char.name, "description": char.description} for char in story_data.characters],
@@ -1008,13 +882,17 @@ Create detailed character descriptions and image prompts as before. Return the r
         log_memory_usage("narrative_engine.FableFactory.generate_media_for_story: end")
         return result
 
-    async def generate_story_with_readability_check_first(self, prompt: str, difficulty_level: int = None) -> dict:
-        """New optimized workflow: 
+    async def generate_story_with_readability_check_first(self, prompt: str, difficulty_level: int = None, target_languages: List[SupportedLanguage] = None) -> dict:
+        """Optimized workflow: 
         Phase 1: Generate text only, check readability, retry text if needed
-        Phase 2: Generate media AND translations in parallel for final chosen text  
+        Phase 2: Generate media AND translations in parallel
         Phase 3: Combine results
         
-        This eliminates the waste of generating complete stories with media twice."""
+        Args:
+            prompt: Story generation prompt
+            difficulty_level: Target reading level (0-8)
+            target_languages: Optional list of languages to translate to
+        """
         log_memory_usage("narrative_engine.FableFactory.generate_story_with_readability_check_first: start")
         start_time = time.monotonic()
         
@@ -1042,8 +920,8 @@ Create detailed character descriptions and image prompts as before. Return the r
             logger.info(f"Primary story readability score {primary_score:.1f} is off target {target_level} by {score_difference:.1f}. Generating retry...")
             
             try:
-                retry_story = await self.generate_story_with_readability_feedback_text_only(
-                    prompt, target_level, primary_score, primary_story
+                retry_story = await self.weave_narrative_text_only(
+                    prompt, target_level, primary_story, primary_score
                 )
                 
                 if retry_story:
@@ -1073,114 +951,52 @@ Create detailed character descriptions and image prompts as before. Return the r
         logger.info("Phase 2: Generating images, audio, and translations in parallel...")
         phase2_start = time.monotonic()
         
-        # Start media generation and translations simultaneously
-        media_task = self.generate_media_for_story(chosen_story)
-        # Note: Translation will be handled by the caller (celery worker) if needed
-        # This method just returns the story with media, keeping it focused
+        # Start all tasks in parallel:
+        # 1. Generate English media (images + audio)
+        # 2. Generate translations if needed
+        tasks = []
         
-        complete_story = await media_task
+        # Task 1: Generate English media
+        media_task = self.generate_media_for_story(chosen_story)
+        tasks.append(("en", media_task))
+        
+        # Task 2: Generate translations if needed
+        if target_languages:
+            translation_service = TranslationService()
+            for language in target_languages:
+                if language != SupportedLanguage.ENGLISH:
+                    task = self._generate_translated_story(chosen_story, language, translation_service)
+                    tasks.append((language.value, task))
+        
+        # Execute all tasks in parallel
+        results = await asyncio.gather(*[task for _, task in tasks], return_exceptions=True)
+        
+        # Process results
+        story_data = {}
+        for (lang, _), result in zip(tasks, results):
+            if isinstance(result, Exception):
+                logger.error(f"Failed to generate {lang} story: {result}")
+                if lang == "en":
+                    raise ValueError("Failed to generate English story with media")
+                # For translations, use English as fallback
+                story_data[lang] = chosen_story
+            else:
+                story_data[lang] = result
         
         phase2_elapsed = time.monotonic() - phase2_start
         logger.info(f"Phase 2 complete in {phase2_elapsed:.2f} seconds")
         
         # Summary
         total_elapsed = time.monotonic() - start_time
-        word_count = complete_story.get("word_count", 0)
-        page_count = complete_story.get("page_count", 0)
-        illustration_count = complete_story.get("illustration_count", 0)
+        word_count = story_data["en"].get("word_count", 0)
+        page_count = story_data["en"].get("page_count", 0)
+        illustration_count = story_data["en"].get("illustration_count", 0)
+        translation_count = len(story_data) - 1  # Subtract English
         
-        logger.info(f"Optimized story generation complete in {total_elapsed:.2f} seconds. Title: {complete_story.get('title')}, {page_count} pages, {illustration_count} images, {word_count} words.")
+        logger.info(f"Optimized story generation complete in {total_elapsed:.2f} seconds. "
+                   f"Title: {story_data['en'].get('title')}, {page_count} pages, "
+                   f"{illustration_count} images, {word_count} words, "
+                   f"{translation_count} translations.")
+        
         log_memory_usage("narrative_engine.FableFactory.generate_story_with_readability_check_first: end")
-        
-        return complete_story
-    
-    async def generate_story_with_readability_feedback_text_only(self, prompt: str, target_level: int, current_score: float, previous_story: dict) -> dict:
-        """Generate retry story TEXT ONLY with readability feedback, no media generation."""
-        log_memory_usage("narrative_engine.FableFactory.generate_story_with_readability_feedback_text_only: start")
-        
-        if self.use_dummy_ai:
-            return {
-                "title": "The Brave Child's Adventure (Retry)",
-                "characters": [
-                    {"name": "Jamie", "description": "a brave 8-year-old with curly brown hair and a blue backpack"}
-                ],
-                "pages": [
-                    {"text": "Jamie found a map.", "imagePrompt": "A child holding a map."},
-                    {"text": "Jamie went to the woods.", "imagePrompt": "A child walking into a forest."},
-                    {"text": "Together, they found treasure.", "imagePrompt": "A child celebrating next to a treasure chest."}
-                ]
-            }
-        
-        self.content_screener.validate_prompt(prompt)
-        
-        # Use structured outputs for retry as well
-        from pydantic import BaseModel
-        from typing import List
-
-        class Character(BaseModel):
-            name: str
-            description: str
-
-        class StoryPage(BaseModel):
-            text: str
-            imagePrompt: str
-
-        class StoryStructure(BaseModel):
-            title: str
-            characters: List[Character]
-            pages: List[StoryPage]
-        
-        # Combine all previous story text for analysis
-        previous_text = " ".join([page.get("text", "") for page in previous_story.get("pages", [])])
-        
-        # Create feedback-based prompt
-        feedback_prompt = self._create_readability_feedback_prompt(
-            prompt, target_level, current_score, previous_text
-        )
-        
-        # Generate retry story with structured outputs
-        attempts, backoff = 3, 1
-        for i in range(attempts):
-            try:
-                completion = await asyncio.to_thread(
-                    self.client.beta.chat.completions.parse,
-                    model="gpt-4o",
-                    messages=[
-                        {"role": "system", "content": feedback_prompt},
-                        {"role": "user", "content": f"Rewrite the story about: {prompt}. Adjust the complexity to better match Grade Level {target_level}."}
-                    ],
-                    response_format=StoryStructure,
-                    temperature=0.7 + i*0.1,
-                    max_tokens=1800,
-                    presence_penalty=0.6,
-                    frequency_penalty=0.5
-                )
-                
-                story_data = completion.choices[0].message.parsed
-                
-                # Convert to dict format
-                return {
-                    "title": story_data.title,
-                    "characters": [{"name": char.name, "description": char.description} for char in story_data.characters],
-                    "pages": [{"text": page.text, "imagePrompt": page.imagePrompt} for page in story_data.pages]
-                }
-                
-            except Exception as e:
-                logger.error(f"generate_story_with_readability_feedback_text_only error {i}: {e}")
-                if i < attempts-1:
-                    await asyncio.sleep(backoff)
-                    backoff *= 2
-        
-        # If we get here, all attempts failed
-        logger.warning("Readability feedback retry failed, returning None")
-        return None
-
-def generate_story_package(prompt: str) -> dict:
-    """
-    Synchronous wrapper for Lambda compatibility.
-    Orchestrates story generation using FableFactory.
-    """
-    factory = FableFactory()
-    return asyncio.run(factory.generate_story_package(prompt))
-
-# All logic now lives in FableFactory methods above.
+        return story_data

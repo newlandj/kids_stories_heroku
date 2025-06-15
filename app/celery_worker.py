@@ -58,21 +58,17 @@ Session = sessionmaker(bind=engine)
 async def generate_media_and_translations_parallel(factory, chosen_text_story, prompt, target_language_enums):
     """Helper function to run media generation and translation in parallel"""
     if target_language_enums:
-        # Start both processes in parallel
-        english_story, translation_data = await asyncio.gather(
-            factory.generate_media_for_story(chosen_text_story),
-            factory.generate_story_with_translations(
-                prompt, target_language_enums, chosen_text_story
-            )
+        # Start translations only - media is already generated in Phase 2
+        translation_data = await factory.generate_story_with_translations(
+            prompt, target_language_enums, chosen_text_story
         )
         # Combine English story with translations
-        story_data = {"en": english_story}
+        story_data = {"en": chosen_text_story}  # Use the story with media from Phase 2
         story_data.update(translation_data)
         return story_data
     else:
-        # No translations needed, just generate media
-        english_story = await factory.generate_media_for_story(chosen_text_story)
-        return {"en": english_story}
+        # No translations needed, just return the story with media from Phase 2
+        return {"en": chosen_text_story}
 
 @celery_app.task(bind=True)
 def generate_book_task(self, book_id, prompt, target_languages=None, difficulty_level=None):
@@ -107,19 +103,15 @@ def generate_book_task(self, book_id, prompt, target_languages=None, difficulty_
                 except ValueError:
                     print(f"Warning: Invalid language code {lang_code}, skipping")
         
-        # Generate story package with readability checking and potential retry
+        # Generate story package with readability checking and translations in parallel
         factory = FableFactory()
+        story_data = asyncio.run(factory.generate_story_with_readability_check_first(
+            prompt, 
+            difficulty_level=difficulty_level,
+            target_languages=target_language_enums
+        ))
         
-        # Step 1: Generate initial English story using optimized workflow (text only)
-        # This includes readability checking and potential retry
-        chosen_text_story = asyncio.run(factory.generate_story_with_readability_check_first(prompt, difficulty_level))
-        log_memory_usage("celery_worker.generate_book_task: after text generation and readability check")
-        
-        # Step 2: Generate media AND translations in parallel
-        # Start both processes simultaneously since translations only need text
-        story_data = asyncio.run(generate_media_and_translations_parallel(factory, chosen_text_story, prompt, target_language_enums))
-        
-        log_memory_usage("celery_worker.generate_book_task: optimized story generation complete")
+        log_memory_usage("celery_worker.generate_book_task: story generation complete")
         
         # Update the book's readability score with final calculated score
         english_story = story_data.get("en", {})
@@ -146,7 +138,7 @@ def generate_book_task(self, book_id, prompt, target_languages=None, difficulty_
             except Exception as e:
                 print(f"Warning: Final readability analysis failed for book {book_id}: {e}")
         
-        # Update book with result
+        # Update book status and title
         book.status = "ready"
         book.title = english_story.get("title")  # Save generated title
         
@@ -186,7 +178,7 @@ def generate_book_task(self, book_id, prompt, target_languages=None, difficulty_
         
         return {
             "status": "ready", 
-            "book_id": book_id, 
+            "book_id": book_id,
             "languages": list(story_data.keys()) if 'story_data' in locals() else ["en"]
         }
         
