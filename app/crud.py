@@ -190,3 +190,15 @@ async def update_book_readability_score(
     book.calculated_readability_score = calculated_readability_score
     await session.commit()
     return book
+
+
+async def fetch_page_by_book_order_language(
+    db: AsyncSession, book_id: uuid.UUID, order: int, language: SupportedLanguage
+) -> Page:
+    """Fetch a specific page by book ID, order, and language."""
+    result = await db.execute(
+        select(Page).where(
+            Page.book_id == book_id, Page.order == order, Page.language == language
+        )
+    )
+    return result.scalar_one_or_none()

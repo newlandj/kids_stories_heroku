@@ -24,12 +24,15 @@ from app.crud import (
     fetch_available_languages_for_book,
     fetch_book_by_id,
     fetch_book_by_request_id,
+    fetch_page_by_book_order_language,
     fetch_pages_by_book_id_and_language,
 )
 from app.db import SessionLocal
 from app.models import SupportedLanguage
 from app.translation_service import TranslationService
 from app.utils import log_memory_usage
+
+logger = logging.getLogger("kids-story-app")
 
 app = FastAPI()
 
@@ -194,6 +197,7 @@ async def get_book_endpoint(
     )
 
 
+# Saved for future use, not currently used
 @app.post("/books/{book_id}/translate")
 async def translate_book_endpoint(
     book_id: str, req: TranslationRequest, db: AsyncSession = Depends(get_db)
@@ -294,6 +298,78 @@ async def get_book_languages_endpoint(book_id: str, db: AsyncSession = Depends(g
 
     available_languages = await fetch_available_languages_for_book(db, book.book_id)
     return {"book_id": book_id, "available_languages": available_languages}
+
+
+@app.post("/books/{book_id}/pages/{page_order}/audio")
+async def generate_page_audio_endpoint(
+    book_id: str,
+    page_order: int,
+    language: str = "en",
+    db: AsyncSession = Depends(get_db),
+):
+    """Generate audio for a specific page on-demand."""
+    log_memory_usage("main.generate_page_audio_endpoint: start")
+    import uuid as uuid_mod
+
+    try:
+        book_uuid = uuid_mod.UUID(book_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid book_id format")
+
+    book = await fetch_book_by_id(db, book_uuid)
+    if not book:
+        raise HTTPException(status_code=404, detail="Book not found")
+
+    # Validate language
+    try:
+        lang_enum = SupportedLanguage(language)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Unsupported language: {language}")
+
+    # Get the specific page
+    page = await fetch_page_by_book_order_language(
+        db, book.book_id, page_order, lang_enum
+    )
+    if not page:
+        raise HTTPException(status_code=404, detail="Page not found")
+
+    # Check if audio already exists
+    if page.audio_url:
+        return {"audio_url": page.audio_url, "cached": True}
+
+    # Generate audio on-demand
+    try:
+        from app.narrative_engine import FableFactory
+
+        factory = FableFactory()
+
+        # Select appropriate voice for the language
+        voice = factory._select_voice_for_language(language)
+        logger.info(
+            f"Generating audio for page {page_order} in language '{language}' using voice '{voice}'"
+        )
+
+        # Generate audio for this specific page
+        audio_result = await factory._generate_single_narration(
+            page.text, page_order, voice
+        )
+
+        if audio_result and audio_result.get("audio_url"):
+            # Update the page with the new audio URL
+            page.audio_url = audio_result["audio_url"]
+            await db.commit()
+
+            log_memory_usage("main.generate_page_audio_endpoint: success")
+            return {"audio_url": audio_result["audio_url"], "cached": False}
+        else:
+            raise HTTPException(status_code=500, detail="Failed to generate audio")
+
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"Error generating audio for page {page_order}: {e}")
+        raise HTTPException(
+            status_code=500, detail=f"Audio generation failed: {str(e)}"
+        )
 
 
 @app.get("/")

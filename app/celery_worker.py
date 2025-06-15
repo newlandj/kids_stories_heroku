@@ -115,11 +115,14 @@ def generate_book_task(
         # Generate story package with readability checking and translations in parallel
         print(f"Book {book_id}: Creating FableFactory...")
         import time
+
         factory_start = time.monotonic()
         factory = FableFactory()
         factory_elapsed = time.monotonic() - factory_start
-        print(f"Book {book_id}: FableFactory creation took {factory_elapsed:.3f} seconds")
-        
+        print(
+            f"Book {book_id}: FableFactory creation took {factory_elapsed:.3f} seconds"
+        )
+
         print(f"Book {book_id}: Starting story generation...")
         story_start = time.monotonic()
         story_data = asyncio.run(

@@ -3,7 +3,7 @@ import logging
 import os
 from typing import Any
 
-logger = logging.getLogger("kids-story-lambda")
+logger = logging.getLogger("kids-story-app")
 
 
 class AppConfig:

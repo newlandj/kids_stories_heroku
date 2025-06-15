@@ -3,7 +3,7 @@ import random
 import re
 from typing import Any, Dict
 
-logger = logging.getLogger("kids-story-lambda")
+logger = logging.getLogger("kids-story-app")
 
 
 class ContentScreener:

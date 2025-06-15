@@ -6,9 +6,6 @@ SHELL := /bin/bash
 # Prevent commands from being echoed
 .SILENT:
 
-# Define phony targets (targets that don't represent files)
-.PHONY: format test_local check install clean lambda_layer
-
 # ==============================================================================
 # Development Tasks
 # ==============================================================================
