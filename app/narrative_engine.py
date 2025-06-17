@@ -784,7 +784,8 @@ Create detailed character descriptions and image prompts as before. Return the r
 
         # Use gpt-image-1 with proper parameters (no response_format, minimum 1024x1024)
         prompt = (
-            f"Colorful children's book illustration, {art_direction}: {page_prompt}"
+            f"Colorful children's book illustration with NO TEXT, NO LETTERS, NO WORDS, NO WRITING of any kind, {art_direction}: {page_prompt}. "
+            f"Pure visual illustration only, no text elements, signs, or written characters visible anywhere in the image."
         )
         resp = await asyncio.to_thread(
             self.client.images.generate,
