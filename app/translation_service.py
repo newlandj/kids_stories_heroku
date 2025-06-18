@@ -26,6 +26,8 @@ class TranslationService:
             SupportedLanguage.CHINESE: "Chinese (Simplified)",
             SupportedLanguage.FRENCH: "French",
             SupportedLanguage.PORTUGUESE: "Portuguese",
+            SupportedLanguage.KOREAN: "Korean",
+            SupportedLanguage.HINDI: "Hindi",
         }
 
     async def translate_page_text(
@@ -66,9 +68,17 @@ class TranslationService:
             else:
                 difficulty_guidance = "Use sophisticated sentence structures (10-18 words) and advanced vocabulary suitable for ages 10-12."
 
+        # Add language-specific cultural and formatting guidance
+        cultural_guidance = ""
+        if target_language == SupportedLanguage.KOREAN:
+            cultural_guidance = "Use age-appropriate Korean vocabulary and consider Korean cultural context. Use proper Hangul script formatting."
+        elif target_language == SupportedLanguage.HINDI:
+            cultural_guidance = "Use age-appropriate Hindi vocabulary and consider Indian cultural context. Use proper Devanagari script formatting."
+
         prompt = f"""Translate the following children's story text to {language_name}. 
 Maintain the same tone and reading level as the original text.
 {difficulty_guidance}
+{cultural_guidance}
 
 Original text:
 {text}

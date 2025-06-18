@@ -15,6 +15,8 @@ class SupportedLanguage(enum.Enum):
     CHINESE = "zh"
     FRENCH = "fr"
     PORTUGUESE = "pt"
+    KOREAN = "ko"
+    HINDI = "hi"
 
 
 class DifficultyLevel(enum.IntEnum):
