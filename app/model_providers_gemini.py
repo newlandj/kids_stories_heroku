@@ -277,7 +277,6 @@ class GeminiProvider(ModelProvider):
             # Add structured output if available
             if structured_output is not None:
                 result["structured_output"] = structured_output
-                self.logger.info(f"Structured output successfully parsed: {type(structured_output)}")
             
             return result
             
@@ -296,23 +295,108 @@ class GeminiProvider(ModelProvider):
         return await self._run_in_executor(self._generate_text_sync, prompt, model, response_schema, **kwargs)
     
     def _generate_image_sync(self, prompt: str, model: str, **kwargs) -> str:
-        """Synchronous image generation - placeholder implementation"""
+        """Synchronous image generation using Gemini 2.0 Flash with image generation"""
         start_time = time.time()
         self._log_request("image_generation", model, prompt_length=len(prompt))
         
         try:
-            # For now, return a placeholder - image generation needs to be implemented
-            # when the google-genai package supports it properly
-            self.logger.warning("Gemini image generation not yet implemented with google-genai package")
+            # Check if using dummy AI mode
+            use_dummy_ai = os.environ.get("USE_DUMMY_AI", "false").lower() in ("true", "1", "yes")
             
-            # Create a placeholder response
+            if use_dummy_ai:
+                self.logger.info("Using dummy mode for image generation")
+                end_time = time.time()
+                duration = end_time - start_time
+                self._log_response("image_generation", model, duration, 1000)  # Fake 1KB image
+                return "https://example.com/dummy-image.png"
+            
+            # Enhance prompt for better safety compliance
+            enhanced_prompt = self._enhance_prompt_for_safety(prompt)
+            self.logger.debug(f"Enhanced prompt length: {len(enhanced_prompt)} (original: {len(prompt)})")
+            
+            # Build generation config for image generation
+            generation_config = types.GenerateContentConfig(
+                temperature=kwargs.get("temperature", 0.9),
+                response_modalities=["TEXT", "IMAGE"],  # Required for image generation
+                safety_settings=[
+                    types.SafetySetting(
+                        category="HARM_CATEGORY_HARASSMENT",
+                        threshold="BLOCK_ONLY_HIGH"
+                    ),
+                    types.SafetySetting(
+                        category="HARM_CATEGORY_HATE_SPEECH", 
+                        threshold="BLOCK_ONLY_HIGH"
+                    ),
+                    types.SafetySetting(
+                        category="HARM_CATEGORY_SEXUALLY_EXPLICIT",
+                        threshold="BLOCK_ONLY_HIGH"
+                    ),
+                    types.SafetySetting(
+                        category="HARM_CATEGORY_DANGEROUS_CONTENT",
+                        threshold="BLOCK_ONLY_HIGH"
+                    )
+                ]
+            )
+            
+            # Make API call using the image generation model
+            response = self.client.models.generate_content(
+                model=model,
+                contents=enhanced_prompt,
+                config=generation_config
+            )
+            
+            # Log the response for debugging
+            self.logger.info(f"Gemini image generation response: {response}")
+            
+            # Check if response was blocked by safety filters
+            if not response.candidates:
+                self.logger.warning("No candidates returned in image generation response")
+                raise GeminiSafetyException("No content generated - response blocked or no candidates returned")
+            
+            # Extract image data from response
+            candidate = response.candidates[0]
+            if not candidate.content or not candidate.content.parts:
+                raise Exception("No content parts found in image generation response")
+            
+            # Find the image part in the response
+            image_data = None
+            for part in candidate.content.parts:
+                if hasattr(part, 'inline_data') and part.inline_data:
+                    image_data = part.inline_data.data
+                    break
+            
+            if not image_data:
+                raise Exception("No image data found in response parts")
+            
+            # image_data should be base64 encoded image bytes
+            if isinstance(image_data, str):
+                # If it's base64 string, decode it
+                image_bytes = base64.b64decode(image_data)
+            else:
+                # If it's already bytes, use directly
+                image_bytes = image_data
+            
+            self.logger.info(f"Generated image: {len(image_bytes)} bytes")
+            
+            # Upload image to S3
+            from app.storage import upload_file_to_s3
+            image_url = upload_file_to_s3(
+                file_data=image_bytes,
+                file_type="image",
+                extension="png"
+            )
+            
+            # Calculate timing and log success
             end_time = time.time()
             duration = end_time - start_time
-            self._log_response("image_generation", model, duration, 0, error="Not implemented")
+            self._log_response("image_generation", model, duration, len(image_bytes))
             
-            # Return a placeholder URL - in production this would be a real generated image
-            return "https://via.placeholder.com/512x512.png?text=Gemini+Image+Placeholder"
+            self.logger.info(f"Gemini image generation completed successfully: {image_url}")
+            return image_url
             
+        except GeminiSafetyException:
+            # Re-raise safety exceptions as-is
+            raise
         except Exception as e:
             end_time = time.time()
             duration = end_time - start_time

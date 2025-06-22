@@ -600,9 +600,6 @@ Keep sentences and vocabulary appropriate for the target age group. Make sure yo
         )
         max_pages = target_guidance.get("max_pages", 4)
 
-        logger.info(
-            f"_create_readability_feedback_prompt: Building feedback prompt, previous_text length: {len(previous_text)} chars"
-        )
         result = f"""
 You are rewriting a children's story that needs readability adjustment.
 
@@ -633,10 +630,6 @@ TASK: Rewrite the story to better match Grade Level {target_level}. Keep the sam
 Create detailed character descriptions and image prompts as before. Return the response in the same JSON format with title, characters, and pages.
 """
 
-        elapsed = time.monotonic() - start_time
-        logger.info(
-            f"_create_readability_feedback_prompt: Completed in {elapsed:.3f} seconds, prompt length: {len(result)} chars"
-        )
         return result
 
     async def generate_story_with_translations(
@@ -984,21 +977,10 @@ Create detailed character descriptions and image prompts as before. Return the r
         attempts, backoff = 3, 1
         for i in range(attempts):
             try:
-                logger.info(
-                    f"weave_narrative_text_only: Starting OpenAI API call attempt {i + 1}/{attempts}"
-                )
                 api_call_start = time.monotonic()
 
                 # Use the text provider instead of direct OpenAI client
                 text_provider = ModelProviderFactory.get_text_provider(self.model_preferences.text_model)
-                logger.info(
-                    f"weave_narrative_text_only: Using text provider: {text_provider.__class__.__name__} for model: {self.model_preferences.text_model}"
-                )
-
-                # Log the parameters being sent  
-                logger.info(
-                    f"weave_narrative_text_only: API parameters - temperature={0.7 + i * 0.1}"
-                )
 
                 completion = await text_provider.generate_text(
                     prompt=f"{system_prompt}\n\nUser: {user_message}",

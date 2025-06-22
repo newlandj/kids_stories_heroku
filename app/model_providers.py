@@ -24,11 +24,11 @@ class TextModel(str, Enum):
     GPT_4_1 = "gpt-4.1"
     GPT_4_1_MINI = "gpt-4.1-mini"
     O3 = "o3"
-    O4_MINI = "o4-mini"
     
     # Gemini Models
     GEMINI_2_5_FLASH = "gemini-2.5-flash"
     GEMINI_2_5_FLASH_LITE = "gemini-2.5-flash-lite-preview-06-17"
+    GEMINI_2_5_PRO = "gemini-2.5-pro"
 
 
 class ImageModel(str, Enum):
@@ -62,9 +62,107 @@ class ModelConfig:
         TextModel.GPT_4_1: "GPT-4.1", 
         TextModel.GPT_4_1_MINI: "GPT-4.1-mini",
         TextModel.O3: "o3",
-        TextModel.O4_MINI: "o4-mini",
         TextModel.GEMINI_2_5_FLASH: "Gemini 2.5 Flash",
         TextModel.GEMINI_2_5_FLASH_LITE: "Gemini 2.5 Flash - Lite",
+        TextModel.GEMINI_2_5_PRO: "Gemini 2.5 Pro",
+    }
+    
+    # Model-specific parameter configurations
+    TEXT_MODEL_CONFIGS = {
+        # Standard OpenAI models
+        TextModel.GPT_4O: {
+            "temperature": 0.9,
+            "max_tokens": None,  # Let model decide
+            "top_p": 1.0,
+            "frequency_penalty": 0.0,
+            "presence_penalty": 0.0,
+        },
+        TextModel.GPT_4O_MINI: {
+            "temperature": 0.9,
+            "max_tokens": None,
+            "top_p": 1.0,
+            "frequency_penalty": 0.0,
+            "presence_penalty": 0.0,
+        },
+        TextModel.GPT_4_1: {
+            "temperature": 0.9,
+            "max_tokens": None,
+            "top_p": 1.0,
+            "frequency_penalty": 0.0,
+            "presence_penalty": 0.0,
+        },
+        TextModel.GPT_4_1_MINI: {
+            "temperature": 0.9,
+            "max_tokens": None,
+            "top_p": 1.0,
+            "frequency_penalty": 0.0,
+            "presence_penalty": 0.0,
+        },
+        # Reasoning models (O3 series) - more restrictive parameters
+        TextModel.O3: {
+            "temperature": 1.0,  # O3 only supports default temperature
+            "max_tokens": None,
+            # O3 doesn't support top_p, frequency_penalty, presence_penalty
+        },
+        # Gemini models
+        TextModel.GEMINI_2_5_FLASH: {
+            "temperature": 0.9,
+            "max_output_tokens": None,
+            "top_p": 0.95,
+            "top_k": 40,
+        },
+        TextModel.GEMINI_2_5_FLASH_LITE: {
+            "temperature": 0.9,
+            "max_output_tokens": None,
+            "top_p": 0.95,
+            "top_k": 40,
+        },
+        TextModel.GEMINI_2_5_PRO: {
+            "temperature": 0.9,
+            "max_output_tokens": None,
+            "top_p": 0.95,
+            "top_k": 40,
+        },
+    }
+    
+    # Image model configurations
+    IMAGE_MODEL_CONFIGS = {
+        ImageModel.DALL_E_2: {
+            "size": "512x512",
+            # Quality and style are not supported for DALL-E 2
+            # "quality": "standard",
+            # "style": "natural",
+        },
+        ImageModel.DALL_E_3: {
+            "size": "1024x1024", # options are 1024x1024, 1792x1024, and 1024x1792
+            "quality": "standard", #options are hd and standard
+            "style": "vivid", #options are natural and vivid
+        },
+        ImageModel.GPT_IMAGE_1: {
+            "size": "512x512",
+            "quality": "standard", 
+        },
+        ImageModel.GEMINI_2_0_FLASH_IMAGE: {
+            # Gemini-specific image parameters
+        },
+    }
+    
+    # Audio model configurations
+    AUDIO_MODEL_CONFIGS = {
+        AudioModel.TTS_1: {
+            "voice": "nova",
+            "speed": 1.0,
+            "response_format": "mp3",
+        },
+        AudioModel.TTS_1_HD: {
+            "voice": "nova", 
+            "speed": 1.0,
+            "response_format": "mp3",
+        },
+        AudioModel.GEMINI_2_5_FLASH_TTS: {
+            "voice_name": "Leda",
+            # Gemini-specific audio parameters
+        },
     }
     
     IMAGE_MODEL_NAMES = {
@@ -87,9 +185,9 @@ class ModelConfig:
         TextModel.GPT_4_1: "openai",
         TextModel.GPT_4_1_MINI: "openai",
         TextModel.O3: "openai",
-        TextModel.O4_MINI: "openai",
         TextModel.GEMINI_2_5_FLASH: "gemini",
         TextModel.GEMINI_2_5_FLASH_LITE: "gemini",
+        TextModel.GEMINI_2_5_PRO: "gemini",
     }
     
     IMAGE_PROVIDERS = {
@@ -106,9 +204,24 @@ class ModelConfig:
     }
     
     # Default models (as specified in requirements)
-    DEFAULT_TEXT_MODEL = TextModel.GEMINI_2_5_FLASH
+    DEFAULT_TEXT_MODEL = TextModel.O3  # Testing O3 model
     DEFAULT_IMAGE_MODEL = ImageModel.DALL_E_2
     DEFAULT_AUDIO_MODEL = AudioModel.TTS_1
+    
+    @classmethod
+    def get_text_model_config(cls, model: TextModel) -> Dict[str, Any]:
+        """Get configuration parameters for a text model"""
+        return cls.TEXT_MODEL_CONFIGS.get(model, {})
+    
+    @classmethod
+    def get_image_model_config(cls, model: ImageModel) -> Dict[str, Any]:
+        """Get configuration parameters for an image model"""
+        return cls.IMAGE_MODEL_CONFIGS.get(model, {})
+    
+    @classmethod
+    def get_audio_model_config(cls, model: AudioModel) -> Dict[str, Any]:
+        """Get configuration parameters for an audio model"""
+        return cls.AUDIO_MODEL_CONFIGS.get(model, {})
 
 
 class ModelProvider(ABC):

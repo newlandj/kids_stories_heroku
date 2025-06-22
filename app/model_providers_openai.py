@@ -75,12 +75,31 @@ class OpenAIProvider(ModelProvider):
                         "usage": {"prompt_tokens": 10, "completion_tokens": 10, "total_tokens": 20},
                         "duration": duration
                     }
-            # Prepare request parameters
+            # Get model-specific configuration
+            from app.model_providers import ModelConfig, TextModel
+            model_enum = TextModel(model)
+            model_config = ModelConfig.get_text_model_config(model_enum)
+            
+            # Prepare request parameters with model-specific settings
             request_params = {
                 "model": model,
                 "messages": [{"role": "user", "content": prompt}],
-                "temperature": kwargs.get("temperature", 0.7),
             }
+            
+            # Add model-specific parameters, filtering out None values and unsupported params
+            if "temperature" in model_config and model_config["temperature"] is not None:
+                request_params["temperature"] = model_config["temperature"]
+            if "max_tokens" in model_config and model_config["max_tokens"] is not None:
+                request_params["max_tokens"] = model_config["max_tokens"]
+            if "top_p" in model_config and model_config["top_p"] is not None:
+                request_params["top_p"] = model_config["top_p"]
+            if "frequency_penalty" in model_config and model_config["frequency_penalty"] is not None:
+                request_params["frequency_penalty"] = model_config["frequency_penalty"]
+            if "presence_penalty" in model_config and model_config["presence_penalty"] is not None:
+                request_params["presence_penalty"] = model_config["presence_penalty"]
+            
+            self.logger.info(f"Using model config for {model}: {model_config}")
+            self.logger.info(f"Final request params: {request_params}")
             
             # Add structured output if schema provided
             if response_schema:
@@ -164,18 +183,28 @@ class OpenAIProvider(ModelProvider):
         self._log_request("image_generation", model, prompt_length=len(prompt))
         
         try:
-            # Model-specific configurations
-            config = self._get_image_config(model)
+            # Get model-specific configuration
+            from app.model_providers import ModelConfig, ImageModel
+            model_enum = ImageModel(model)
+            model_config = ModelConfig.get_image_model_config(model_enum)
             
-            # Prepare request parameters
+            # Prepare request parameters with model-specific settings
             request_params = {
                 "model": model,
                 "prompt": prompt,
                 "n": 1,
                 "response_format": "b64_json",  # Always use b64_json for consistency
-                "quality": config["quality"],
-                "size": config["size"]
             }
+            
+            # Add model-specific parameters
+            if "quality" in model_config:
+                request_params["quality"] = model_config["quality"]
+            if "size" in model_config:
+                request_params["size"] = model_config["size"]
+            if "style" in model_config:
+                request_params["style"] = model_config["style"]
+            
+            self.logger.info(f"Using image model config for {model}: {model_config}")
             
             # Make API call
             response = await self.client.images.generate(**request_params)
@@ -207,16 +236,27 @@ class OpenAIProvider(ModelProvider):
         self._log_request("audio_generation", model, text_length=len(text), voice=voice)
         
         try:
-            # Use provided voice or default
-            voice = voice or "nova"
+            # Get model-specific configuration
+            from app.model_providers import ModelConfig, AudioModel
+            model_enum = AudioModel(model)
+            model_config = ModelConfig.get_audio_model_config(model_enum)
             
-            # Prepare request parameters
+            # Use provided voice or model config default
+            voice = voice or model_config.get("voice", "nova")
+            
+            # Prepare request parameters with model-specific settings
             request_params = {
                 "model": model,
                 "input": text,
                 "voice": voice,
-                "response_format": "mp3"
+                "response_format": model_config.get("response_format", "mp3")
             }
+            
+            # Add optional parameters
+            if "speed" in model_config:
+                request_params["speed"] = model_config["speed"]
+            
+            self.logger.info(f"Using audio model config for {model}: {model_config}")
             
             # Make API call
             response = await self.client.audio.speech.create(**request_params)
@@ -257,24 +297,4 @@ class OpenAIProvider(ModelProvider):
                         if isinstance(item, dict):
                             self._ensure_additional_properties_false(item)
     
-    def _get_image_config(self, model: str) -> Dict[str, str]:
-        """Get model-specific image generation configuration"""
-        configs = {
-            ImageModel.GPT_IMAGE_1: {
-                "quality": "medium",
-                "size": "1024x1024"
-            },
-            ImageModel.DALL_E_2: {
-                "quality": "standard", 
-                "size": "512x512"
-            },
-            ImageModel.DALL_E_3: {
-                "quality": "standard",
-                "size": "1024x1024"
-            }
-        }
-        
-        return configs.get(model, {
-            "quality": "standard",
-            "size": "1024x1024"
-        }) 
+ 
