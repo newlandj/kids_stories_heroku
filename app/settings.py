@@ -12,6 +12,7 @@ class AppConfig:
     # Default configuration values
     _defaults = {
         "openai_key": None,  # Should be set via environment variable
+        "google_api_key": None,  # Should be set via environment variable for Gemini
         "max_story_length": 500,
         "min_story_length": 300,
         "max_illustrations": 4,
@@ -20,6 +21,7 @@ class AppConfig:
         "content_safety_level": "strict",
         "default_temperature": 0.7,
         "openai_ssm_param_name": "OPEN_AI_KEY",  # Default SSM parameter name
+        "google_ssm_param_name": "GOOGLE_API_KEY",  # Default SSM parameter name for Gemini
     }
 
     # Cache for config values
@@ -50,6 +52,28 @@ class AppConfig:
 
         # Return provided default or None
         return default
+
+    @classmethod
+    def get_openai_api_key(cls) -> str:
+        """Get OpenAI API key from environment or config"""
+        # Check direct environment variable first
+        key = os.environ.get("OPENAI_API_KEY")
+        if key:
+            return key
+        
+        # Fall back to config system
+        return cls.get_value("openai_key")
+    
+    @classmethod
+    def get_google_api_key(cls) -> str:
+        """Get Google API key from environment or config"""
+        # Check direct environment variable first  
+        key = os.environ.get("GOOGLE_API_KEY")
+        if key:
+            return key
+        
+        # Fall back to config system
+        return cls.get_value("google_api_key")
 
     @classmethod
     def _load_config(cls) -> None:

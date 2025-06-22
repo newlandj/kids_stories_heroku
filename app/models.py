@@ -57,6 +57,13 @@ class Book(Base):
         onupdate=func.now(),
         nullable=False,
     )
+    
+    # Model tracking columns (for analytics and performance monitoring)
+    text_model: Mapped[str] = mapped_column(sa.String(100), nullable=True)
+    image_model: Mapped[str] = mapped_column(sa.String(100), nullable=True)
+    audio_model: Mapped[str] = mapped_column(sa.String(100), nullable=True)
+    correct_first_try: Mapped[bool] = mapped_column(sa.Boolean, nullable=True)
+    creation_duration: Mapped[float] = mapped_column(sa.Float, nullable=True)
 
     pages = relationship(
         "Page",

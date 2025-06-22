@@ -29,6 +29,7 @@ from app.crud import (
 )
 from app.db import SessionLocal
 from app.models import SupportedLanguage
+from app.model_providers import ModelPreferences, TextModel, ImageModel, AudioModel, ModelConfig
 from app.translation_service import TranslationService
 from app.utils import log_memory_usage
 
@@ -43,6 +44,13 @@ async def get_db():
 
 
 # --- Data models ---
+class ModelPreferencesRequest(BaseModel):
+    """Model preferences for story generation"""
+    text_model: Optional[str] = ModelConfig.DEFAULT_TEXT_MODEL.value
+    image_model: Optional[str] = ModelConfig.DEFAULT_IMAGE_MODEL.value  
+    audio_model: Optional[str] = ModelConfig.DEFAULT_AUDIO_MODEL.value
+
+
 class BookCreateRequest(BaseModel):
     prompt: str
     request_id: str
@@ -52,6 +60,7 @@ class BookCreateRequest(BaseModel):
     difficulty_level: Optional[int] = (
         2  # Age-based difficulty level (0-10), default to Level 2 (Age 6)
     )
+    model_preferences: Optional[ModelPreferencesRequest] = None
 
 
 class TranslationRequest(BaseModel):
@@ -76,6 +85,11 @@ class BookResponse(BaseModel):
     available_languages: Optional[List[str]] = None
     difficulty_level: Optional[int] = None
     calculated_readability_score: Optional[float] = None
+    text_model: Optional[str] = None
+    image_model: Optional[str] = None  
+    audio_model: Optional[str] = None
+    creation_duration: Optional[float] = None
+    correct_first_try: Optional[bool] = None
 
 
 # --- Redis-based status tracking ---
@@ -116,6 +130,11 @@ async def create_book_endpoint(
             available_languages=available_languages,
             difficulty_level=existing.difficulty_level,
             calculated_readability_score=existing.calculated_readability_score,
+            text_model=existing.text_model,
+            image_model=existing.image_model,
+            audio_model=existing.audio_model,
+            creation_duration=existing.creation_duration,
+            correct_first_try=existing.correct_first_try,
         )
     # Otherwise, create a new book
     book = await create_book(db, req.prompt, req.request_id, None, req.difficulty_level)
@@ -132,12 +151,32 @@ async def create_book_endpoint(
                     status_code=400, detail=f"Unsupported language: {lang_code}"
                 )
 
-    # Enqueue Celery task with target languages
+    # Validate and prepare model preferences
+    model_preferences_dict = None
+    if req.model_preferences:
+        try:
+            # Validate model selections
+            TextModel(req.model_preferences.text_model)
+            ImageModel(req.model_preferences.image_model)
+            AudioModel(req.model_preferences.audio_model)
+            
+            model_preferences_dict = {
+                "text_model": req.model_preferences.text_model,
+                "image_model": req.model_preferences.image_model,
+                "audio_model": req.model_preferences.audio_model,
+            }
+        except ValueError as e:
+            raise HTTPException(
+                status_code=400, detail=f"Invalid model selection: {str(e)}"
+            )
+
+    # Enqueue Celery task with target languages and model preferences
     generate_book_task.delay(
         str(book.book_id),
         req.prompt,
         target_languages if target_languages else None,
         req.difficulty_level,
+        model_preferences_dict,
     )
     log_memory_usage("main.create_book_endpoint: after enqueue")
     return BookResponse(
@@ -147,6 +186,11 @@ async def create_book_endpoint(
         pages=[],
         difficulty_level=book.difficulty_level,
         calculated_readability_score=book.calculated_readability_score,
+        text_model=book.text_model,
+        image_model=book.image_model,
+        audio_model=book.audio_model,
+        creation_duration=book.creation_duration,
+        correct_first_try=book.correct_first_try,
     )
 
 
@@ -194,6 +238,11 @@ async def get_book_endpoint(
         available_languages=available_languages,
         difficulty_level=book.difficulty_level,
         calculated_readability_score=book.calculated_readability_score,
+        text_model=book.text_model,
+        image_model=book.image_model,
+        audio_model=book.audio_model,
+        creation_duration=book.creation_duration,
+        correct_first_try=book.correct_first_try,
     )
 
 
@@ -300,11 +349,14 @@ async def get_book_languages_endpoint(book_id: str, db: AsyncSession = Depends(g
     return {"book_id": book_id, "available_languages": available_languages}
 
 
+class AudioGenerationRequest(BaseModel):
+    language: str = "en"
+
 @app.post("/books/{book_id}/pages/{page_order}/audio")
 async def generate_page_audio_endpoint(
     book_id: str,
     page_order: int,
-    language: str = "en",
+    request: AudioGenerationRequest,
     db: AsyncSession = Depends(get_db),
 ):
     """Generate audio for a specific page on-demand."""
@@ -322,9 +374,9 @@ async def generate_page_audio_endpoint(
 
     # Validate language
     try:
-        lang_enum = SupportedLanguage(language)
+        lang_enum = SupportedLanguage(request.language)
     except ValueError:
-        raise HTTPException(status_code=400, detail=f"Unsupported language: {language}")
+        raise HTTPException(status_code=400, detail=f"Unsupported language: {request.language}")
 
     # Get the specific page
     page = await fetch_page_by_book_order_language(
@@ -340,13 +392,19 @@ async def generate_page_audio_endpoint(
     # Generate audio on-demand
     try:
         from app.narrative_engine import FableFactory
+        from app.model_providers import ModelPreferences
 
-        factory = FableFactory()
+        # Audio model is controlled by backend defaults - no user selection
+        logger.info(f"Audio generation request - Language: {request.language}")
+        preferences = ModelPreferences()  # Always use backend defaults for audio
+        logger.info(f"Using backend default audio model: {preferences.audio_model.value}")
+            
+        factory = FableFactory(preferences)
 
         # Select appropriate voice for the language
-        voice = factory._select_voice_for_language(language)
+        voice = factory._select_voice_for_language(request.language)
         logger.info(
-            f"Generating audio for page {page_order} in language '{language}' using voice '{voice}'"
+            f"Generating audio for page {page_order} in language '{request.language}' using voice '{voice}' with model '{preferences.audio_model.value}'"
         )
 
         # Generate audio for this specific page
@@ -370,6 +428,42 @@ async def generate_page_audio_endpoint(
         raise HTTPException(
             status_code=500, detail=f"Audio generation failed: {str(e)}"
         )
+
+
+@app.get("/models")
+def get_available_models():
+    """Get available AI models for text, image, and audio generation"""
+    return {
+        "text_models": [
+            {
+                "id": model.value,
+                "name": ModelConfig.TEXT_MODEL_NAMES[model],
+                "provider": ModelConfig.TEXT_PROVIDERS[model]
+            }
+            for model in TextModel
+        ],
+        "image_models": [
+            {
+                "id": model.value,
+                "name": ModelConfig.IMAGE_MODEL_NAMES[model],
+                "provider": ModelConfig.IMAGE_PROVIDERS[model]
+            }
+            for model in ImageModel
+        ],
+        "audio_models": [
+            {
+                "id": model.value,
+                "name": ModelConfig.AUDIO_MODEL_NAMES[model],
+                "provider": ModelConfig.AUDIO_PROVIDERS[model]
+            }
+            for model in AudioModel
+        ],
+        "defaults": {
+            "text_model": ModelConfig.DEFAULT_TEXT_MODEL.value,
+            "image_model": ModelConfig.DEFAULT_IMAGE_MODEL.value,
+            "audio_model": ModelConfig.DEFAULT_AUDIO_MODEL.value,
+        }
+    }
 
 
 @app.get("/")

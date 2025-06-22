@@ -12,6 +12,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.db import DATABASE_URL
 from app.models import Book, Page, SupportedLanguage
+from app.model_providers import ModelPreferences
 from app.narrative_engine import FableFactory
 from app.readability_analyzer import ReadabilityAnalyzer
 from app.utils import log_memory_usage
@@ -77,7 +78,7 @@ async def generate_media_and_translations_parallel(
 
 @celery_app.task(bind=True)
 def generate_book_task(
-    self, book_id, prompt, target_languages=None, difficulty_level=None
+    self, book_id, prompt, target_languages=None, difficulty_level=None, model_preferences_dict=None
 ):
     """
     Generate a book with optional multi-language support.
@@ -87,6 +88,7 @@ def generate_book_task(
         prompt: Story generation prompt
         target_languages: Optional list of language codes to translate to
         difficulty_level: Optional difficulty level for readability analysis
+        model_preferences_dict: Optional dictionary of model preferences
     """
     log_memory_usage("celery_worker.generate_book_task: start")
     session = Session()
@@ -112,12 +114,21 @@ def generate_book_task(
                 except ValueError:
                     print(f"Warning: Invalid language code {lang_code}, skipping")
 
+        # Prepare model preferences
+        model_preferences = None
+        if model_preferences_dict:
+            model_preferences = ModelPreferences.from_dict(model_preferences_dict)
+            print(f"Book {book_id}: Using model preferences: {model_preferences.to_dict()}")
+        else:
+            model_preferences = ModelPreferences()  # Use defaults
+            print(f"Book {book_id}: Using default model preferences: {model_preferences.to_dict()}")
+
         # Generate story package with readability checking and translations in parallel
         print(f"Book {book_id}: Creating FableFactory...")
         import time
 
         factory_start = time.monotonic()
-        factory = FableFactory()
+        factory = FableFactory(model_preferences=model_preferences)
         factory_elapsed = time.monotonic() - factory_start
         print(
             f"Book {book_id}: FableFactory creation took {factory_elapsed:.3f} seconds"
@@ -173,6 +184,16 @@ def generate_book_task(
         # Update book status and title
         book.status = "ready"
         book.title = english_story.get("title")  # Save generated title
+        
+        # Save model metadata if available
+        model_metadata = english_story.get("model_metadata", {})
+        if model_metadata:
+            book.text_model = model_metadata.get("text_model")
+            book.image_model = model_metadata.get("image_model")
+            book.audio_model = model_metadata.get("audio_model")
+            book.creation_duration = model_metadata.get("creation_duration")
+            book.correct_first_try = model_metadata.get("correct_first_try")
+            print(f"Book {book_id}: Saved model metadata: {model_metadata}")
 
         # Save pages for all languages to the DB
         for language_code, story_package in story_data.items():
